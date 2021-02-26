@@ -38,6 +38,7 @@ class mp4Set():
     chunks_samples = []
     # #每个chunk在文件中的偏移量       
     chunks_offset = []
+    sample_offset = []     
 
 class trackClass():
     
@@ -77,7 +78,8 @@ class trackClass():
         self.chunks_samples = []
         #每个chunk在文件中的偏移量       
         self.chunks_offset = []
-        #每个音频的sample的大小                                                  
+        #每个sample在chunk的偏移量        
+        self.sample_offset = []                                                
 
     #获取trak中的的Mdia数据内容，并放入self._mdia中；moov->trak->mdia
     def getTrakMdia(self):
@@ -243,6 +245,17 @@ class trackClass():
                 self.sample_counts = h_int                
                 h_int1 = int.from_bytes(self._stts[20+i*4:20+i*4+4], byteorder='big', signed=False)                              
                 self.sample_deltas = h_int1
+
+    #获取视频中的帧的每个chunk的偏移量；从stsc中获取
+    def getChunkOffset(self):
+
+        if self._stco:
+            data = self._stco[:16]
+            dlen, dary = struct.unpack(">I8xI", data)
+            for i in range(0, dlen, 4):
+                h_int1 = int.from_bytes(self._stco[16+i:16+i+4], byteorder='big', signed=False)                              
+                self.chunks_offset.append(h_int1)
+
     #获取视频中的帧的chunk列表；从stsc中获取
     def getSampleChunk(self):
 
@@ -260,22 +273,29 @@ class trackClass():
                 if sc > 1:
                     for h in range(0, sc, 1):
                         o_chunk += 1
+                        s_offset = self.chunks_offset[h_int1-1]
+                        o_offset = 0                   
                         for k in range(0, o_num):
                             self.chunks_samples.append(o_chunk)
+                            s_num = 0
+                            if self.sample_offset:
+                                s_num = len(self.sample_offset)
+                                #如果sample_offset中有数据，则取最后的值+sample_size就是本sample的偏移量
+                                o_offset = o_offset + self.sample_size[s_num-1]
+                            self.sample_offset.append(s_offset+o_offset) 
+
+                s_offset = self.chunks_offset[h_int1-1]
+                o_offset = 0                
                 for k in range(0, h_int2):
-                    self.chunks_samples.append(h_int1)
+                    self.chunks_samples.append(h_int1)                    
+                    s_num = 0
+                    if self.sample_offset:
+                        s_num = len(self.sample_offset)
+                        #如果sample_offset中有数据，则取最后的值+sample_size就是本sample的偏移量
+                        o_offset = o_offset + self.sample_size[s_num-1]
+                    self.sample_offset.append(s_offset+o_offset)                                     
                 o_chunk = h_int1
                 o_num = h_int2  
-
-    #获取视频中的帧的每个chunk的偏移量；从stsc中获取
-    def getChunkOffset(self):
-
-        if self._stco:
-            data = self._stco[:16]
-            dlen, dary = struct.unpack(">I8xI", data)
-            for i in range(0, dlen, 4):
-                h_int1 = int.from_bytes(self._stco[16+i:16+i+4], byteorder='big', signed=False)                              
-                self.chunks_offset.append(h_int1)
 
     def analyze(self):
 
@@ -287,8 +307,8 @@ class trackClass():
         self.getVideoKeyFrameList()
         self.getSampleDeltasAndSampleCount()        
         self.getSampleSize()
+        self.getChunkOffset()        
         self.getSampleChunk()
-        self.getChunkOffset()
         self.getMediaSpsPps()
 
         if self.trakType:
@@ -315,6 +335,8 @@ class trackClass():
             self.mset.chunks_samples = self.chunks_samples
         if self.chunks_offset:
             self.mset.chunks_offset = self.chunks_offset
+        if self.sample_offset:
+            self.mset.sample_offset = self.sample_offset
 
         return self.mset
 

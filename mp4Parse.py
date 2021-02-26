@@ -142,12 +142,40 @@ class Mp4Parse():
             for mt in mt_array:
                 f.write(mt)
 
+    #根据video请求来的内容来生成TS的文件
+    def getFileSlice(self):
+        #http://10.10.10.101/lldq.ts?start=1518&end=1900
+        start = 1518
+        end = 1900
+        sample_size = None
+        chunks_samples = None
+        chunks_offset = None       
+        #根据偏移量取得文件中的部分内容；
+        for trak in self._trak:
+            if trak.trakType == "video":
+                sample_size = trak.sample_size
+                # #每个sample所在的chunk        
+                chunks_samples = trak.chunks_samples
+                chunks_offset = trak.chunks_offset
+                break
+        if not sample_size:
+            return
+        
+        bchunk = chunks_samples[start -1]
+        #根据nchunk来获取该chunk的初始值；
+        bchunk_offset =  chunks_offset[bchunk-1]
+        #根据sample的相对值算出sample的偏移量
+        b_post = 1
+
+        print("aaaa")
+
 if __name__ == '__main__':
 
     metad = Mp4Parse("http://10.10.10.101/lldq.mp4")
     start = datetime.datetime.now()
     metad.getTrack()
-    metad.mkM3u8()           
+    metad.mkM3u8()
+    metad.getFileSlice()           
     end = datetime.datetime.now()     
     print(str(end-start)+" 秒")
     # start = datetime.datetime.now()
