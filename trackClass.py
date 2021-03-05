@@ -64,7 +64,8 @@ class trackClass():
         self._stsc = None
         self._stco = None
         self._stsz = None  
-        self._stsd = None                                
+        self._stsd = None
+        self._ctts = None                                      
         #Sequence Paramater Set List
         self.sps = None
         #Picture Paramater Set List        
@@ -79,7 +80,9 @@ class trackClass():
         #每个chunk在文件中的偏移量       
         self.chunks_offset = []
         #每个sample在chunk的偏移量        
-        self.sample_offset = []                                                
+        self.sample_offset = []
+        #记录ctts中的data与decode之间的差异
+        self.sample_decode_off = []                                                           
 
     #获取trak中的的Mdia数据内容，并放入self._mdia中；moov->trak->mdia
     def getTrakMdia(self):
@@ -163,7 +166,9 @@ class trackClass():
             if dtype == b"stsd":
                 self._stsd = self._stbl[seek: seek+dlen]
             if dtype == b"stts":
-                self._stts = self._stbl[seek: seek+dlen]                                                                      
+                self._stts = self._stbl[seek: seek+dlen]  
+            if dtype == b"ctts":
+                self._ctts = self._stbl[seek: seek+dlen]                                                                                     
             seek += dlen 
 
     #获取SPS, PPS数据内容，并放入moov->trak->mdia->minf->stbl->avc1->avcC->sps pps
@@ -207,7 +212,7 @@ class trackClass():
             for i in range(0, pps_num):
                 bsize = avccdata[soffset+14:soffset+14+2]
                 bsize_int = int.from_bytes(bsize, byteorder='big', signed=False)
-                pps = avccdata[soffset+14+1:soffset+14+1+bsize_int]
+                pps = avccdata[soffset+14+2:soffset+14+2+bsize_int]
                 self.pps=pps
                 #这个值有可能算的不对，因为多循环的内容没有验证过；
                 soffset += bsize_int+2                                    
@@ -268,34 +273,62 @@ class trackClass():
                 #h_int1为取得的chunk的ID号，从1开始，为了保证后续的简单，把chunk的编号设为从0开始；
                 h_int1 = int.from_bytes(self._stsc[16+i:16+i+4], byteorder='big', signed=False)
                 h_int2 = int.from_bytes(self._stsc[16+i+4:16+i+8], byteorder='big', signed=False)
-                
+
                 sc = h_int1 - o_chunk - 1
                 if sc > 1:
                     for h in range(0, sc, 1):
-                        o_chunk += 1
-                        s_offset = self.chunks_offset[h_int1-1]
+                        isFirst = True   
+                        c_offset = self.chunks_offset[o_chunk]                                                                     
                         o_offset = 0                   
                         for k in range(0, o_num):
+                            if isFirst:
+                                self.chunks_samples.append(o_chunk)
+                                self.sample_offset.append(c_offset)
+                                isFirst = False
+                                continue                              
+                            s_num = len(self.sample_offset)
                             self.chunks_samples.append(o_chunk)
-                            s_num = 0
-                            if self.sample_offset:
-                                s_num = len(self.sample_offset)
-                                #如果sample_offset中有数据，则取最后的值+sample_size就是本sample的偏移量
-                                o_offset = o_offset + self.sample_size[s_num-1]
-                            self.sample_offset.append(s_offset+o_offset) 
+                            o_offset = o_offset + self.sample_size[s_num-1]
+                            self.sample_offset.append(c_offset + o_offset)
+                            # print(self.sample_size[s_num-1])
+                            # print(c_offset + o_offset)
+                        o_chunk += 1                                                       
 
+                isFirst = True
                 s_offset = self.chunks_offset[h_int1-1]
-                o_offset = 0                
+                o_offset = 0              
                 for k in range(0, h_int2):
                     self.chunks_samples.append(h_int1)                    
-                    s_num = 0
-                    if self.sample_offset:
-                        s_num = len(self.sample_offset)
-                        #如果sample_offset中有数据，则取最后的值+sample_size就是本sample的偏移量
-                        o_offset = o_offset + self.sample_size[s_num-1]
-                    self.sample_offset.append(s_offset+o_offset)                                     
+                    if isFirst:
+                        self.sample_offset.append(s_offset)
+                        # print(s_offset)                         
+                        isFirst = False
+                        continue
+                    #如果sample_offset中有数据，则取最后的值+sample_size就是本sample的偏移量
+                    s_num = len(self.sample_offset)
+                    o_offset = o_offset + self.sample_size[s_num-1]
+                    # print(self.sample_size[s_num-1])
+                    self.sample_offset.append(s_offset+o_offset)
+                    # print(s_offset+o_offset)                                                          
                 o_chunk = h_int1
-                o_num = h_int2  
+                o_num = h_int2
+                # print("o_chunk:"+str(o_chunk))
+                # print("o_num:"+str(o_num))              
+        return  
+    #获取各帧的偏移量数据 DTS和PTS的偏移量，有的文章说ctts可能没有，但这个是在有的情况下进行的分析，没有的情况下可能会出错；
+    def getPTSDTSOffert(self):
+
+        if self._ctts:
+            data = self._ctts[:16]
+            dlen, dary = struct.unpack(">I8xI", data)
+            for i in range(0, dlen, 8):
+                #h_int1为取得的chunk的ID号，从1开始，为了保证后续的简单，把chunk的编号设为从0开始；
+                h_int1 = int.from_bytes(self._ctts[16+i:16+i+4], byteorder='big', signed=False)
+                h_int2 = int.from_bytes(self._ctts[16+i+4:16+i+8], byteorder='big', signed=False)
+                for m in range(0, h_int1):
+                    self.sample_decode_off.append(h_int2)
+        return 
+
 
     def analyze(self):
 
@@ -309,6 +342,7 @@ class trackClass():
         self.getSampleSize()
         self.getChunkOffset()        
         self.getSampleChunk()
+        self.getPTSDTSOffert()        
         self.getMediaSpsPps()
 
         if self.trakType:
@@ -358,12 +392,12 @@ class trackClass():
             s_offset += self.sample_size[m]
         
         offset = chunk_offset+s_offset
+        offset1 = self.sample_offset[nframe-1]
         return
-
 
 if __name__ == '__main__':
 
-    metad = Mp4MetaData("http://10.10.10.101/lldq.mp4")
+    metad = mp4Set("http://10.10.10.101/lldq.mp4")
     start = datetime.datetime.now()
     metad.loadMetaData()           
     end = datetime.datetime.now()     
