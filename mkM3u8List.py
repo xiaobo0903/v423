@@ -33,6 +33,7 @@ class mkM3u8List():
                 return None
 
             mpp = Mp4Parse(url, hdata, mp4_md5)
+            #把解析出的视频和音频轨的数据放入到redis数据库中
             mpp.saveTrakData()
 
         vtrak, atrak = trakdata.getTrakData(mp4_md5)
@@ -48,12 +49,14 @@ class mkM3u8List():
         sample_deltas = None
         sample_counts = None
         keys = None
+
         duration = self._vtrak.duration
         timescale = self._vtrak.timescale
         v_sample_deltas = self._vtrak.sample_deltas
         v_sample_decode_off = self._vtrak.sample_decode_off
         v_sample_counts = len(v_sample_decode_off)      
         keys = self._vtrak.keys
+        
         if not keys:
             return
         #计算每帧的驻留时间,放大100000倍，主要是为了保证精度ftimescale/100000

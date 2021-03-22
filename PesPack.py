@@ -152,6 +152,19 @@ class PesPack():
         f_dts = int(b_time + iframe*(90000 / video_frame_rate))
         return f_dts
 
+    #根据视频的起始和终止帧号来计算音频的起始和终止的偏移量；
+    def getAudioRange(self, start, end):
+        
+        b_time = 126000
+        #vscale = 24000, deltas = 1000
+        f_timescale = self.vscale
+        f_deltas = self.vdeltas
+        s_time = start * (1000 / (f_timescale / f_deltas))
+        e_time = end * (1000 / (f_timescale / f_deltas))
+        a_start = int(s_time * (1000 / ((self.ascale)/self.adeltas)))
+        a_end = int(e_time * (1000 / ((self.ascale)/self.adeltas)))
+        return a_start, a_end
+
     # #计算每一帧音频的DTS(PCR相同)
     # def getAudioDTSPTS(self, iframe, offset):
     #     #PCR是节目时钟参考，也是一种音视频同步的时钟，pcr、dts、pts 都是对同⼀个系统时钟的采样值，pcr 是递增的，因此可以将其设置为 dts 值,

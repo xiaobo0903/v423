@@ -52,9 +52,16 @@ class tsPack():
 
         #上面是根据视频文件做的判断，还需要加进音频文件的偏离计算；这部分内容在后续增加进去；
         #######################################################################
+        a_start, a_end = self.pes_pack.getAudioRange(self.start, self.end)
+        start_aoff = self._atrak.sample_offset[a_start]
+        end_aoff = self._atrak.sample_offset[a_end]
         #######################################################################
-        self.abs_offset = start_voff
-        return start_voff, end_voff
+        # start_off = start_voff if start_aoff > start_voff else start_aoff 
+        # end_off = end_voff if end_voff > end_aoff else end_aoff 
+        start_off = start_voff
+        end_off = end_voff
+        self.abs_offset = start_off
+        return start_off, end_off
 
     #获取mp4片段的数据内容
     def getMp4Data(self):
@@ -174,109 +181,96 @@ class tsPack():
 
         ret = []
         #一帧的数据的第一个包头；
-        ts_head = [0x47, 0x41, 0x00]
+        ts_head_first = [0x47, 0x41, 0x00]
         #一帧的数据的非第一个包头；
-        ts_head1 = [0x47, 0x01, 0x00]        
-
+        ts_head_no_first = [0x47, 0x01, 0x00]
         #后面是自适应字段的封装，主要是PCR的封装，PCR设置为DTS的值；还有是为了为了传送打包后长度不足188B（包括包头）的不完整TS；
         #添加PCR的内容的包长度将增加7个字节， 所以如果pesdata的数据长度< 188-4-1-7则需要增加填充的长度；
-        adaptation_field_length = 0x07
+
+        #第一个包一定是带有自适应的标记的，所以 0011，即0x30
+        s_f = 0x30
+
+        #下面再处理第一帧全部都设置为带PCR的内容，
         pcr_flag = 0x10
         #PCR字字段格式6B，48bit, PCR:33, reserved:6, original_program_clock_reference_extension:9
         pcr1 = (0x000000000000|pcr)<<15
         # pcr_a = struct.pack("6b", pcr1)
-        pcr_a = pcr1.to_bytes(6, byteorder='big')        
+        pcr_a = pcr1.to_bytes(6, byteorder='big')
+        #做为填充字段，则需要设置一个PCR的标志位，长度后面+PCR的标志，所以一共有两个占位字节，如果有PCR则需要设置为0x10，如果没有则设置为0x00:
+        #PCR的内容一共占6个字节（48位），加上一个字节表示PCR的标志位(pcr_flag=0x10),所以PCR的内容一共占7位；
+        #因为默认都加了自填充字段，所以前面还需要有一位的自适应的长度字段（默认:0x07),所以最小的长度应该是pesdata的长度加上8位；
+        #如果只缺一个字符即可完成自适应的可以在pesdate前加一个0x00字节，做为调节字节；
+        #PCR的内容也是填充的内容，如果PES的长度加上PCR的长度也小于184则需要填充0xFF字节，可以尝试全部在第一帧进行填充
 
-        peslen1 = len(pesdata)+8
-        #判断prelen长度的内容，需要生成多少TS的包;
-        tnum = int((peslen1 + 183)/184)
-        #判断需要增加填充内容的数量；
-        stuff_num = tnum * 184 - peslen1
+        adaptation_field_length = 0x07
+        fill_data = []
         ts_d = []
-        #当帧的长度小于184的时候，也就是如果只有一个包tnum=1，且不满184个字节，则在第一个包中进行填加；
-        if tnum == 1:
-            #头一个包，并且带自适应区
-            ts_p = bytes(ts_head)
-            #计算counter字段的值
-            #包的计数部分，完成TS头的四个字节的封装；
+        #先判读数据的长度是否需要填充，TS包长度为188，前四个字节是每个TS的包头，所以实际的数据区只有184，因为第一包的里面含有PCR的内容，2位+6位（PCR）
+        # 所以 如果长度< =176，则需要填充；
+        if len(pesdata) <= 176:
+            fill_num = 176 - len(pesdata)
+            adaptation_field_length1 = adaptation_field_length  + fill_num
+            a_fill = []
+            for i in range(0, fill_num):
+                a_fill.append(0xFF)
+            pesdata = bytes(a_fill)+pesdata
             s_f = 0x30
             s_c = self.counter&0x0F
             s_fc = s_f|s_c
-            adaptation_field_length = adaptation_field_length + stuff_num
-            ts_p = ts_p + s_fc.to_bytes(1, byteorder='little') + adaptation_field_length.to_bytes(1, byteorder='little')+pcr_flag.to_bytes(1, byteorder='little')
-            #信息头加上自适应的数据内容；
-            ts_p = ts_p + pcr_a
-            #进行数据的填充
-            for i in range(0, stuff_num):
-                ts_p = ts_p +(0xFF).to_bytes(1, byteorder='little')
-            ts_p = ts_p + pesdata
-            if len(ts_p) != 188:
-                print("error1")
-            self.counter = self.counter+1
+            ts_p = bytes(ts_head_first) + s_fc.to_bytes(1, byteorder='big') + adaptation_field_length1.to_bytes(1, byteorder='big') + pcr_flag.to_bytes(1, byteorder='big') + pcr_a + pesdata
+            self.counter = self.counter + 1
             if self.counter > 15:
                 self.counter = 0
             ts_d.append(ts_p)
             return ts_d
-        #以下的部分就是当长度大于184的时候，处理的过程：
-        #如果PES的内容超过184个字节，则需要进行分包处理，那么第一个包就含有自适应的字节数(PCR)
-        if tnum > 1:
-           #头一个包，并且带自适应区,装载PCR数据；
-            ts_p = bytes(ts_head)
-            #计算counter字段的值
-            #包的计数部分，完成TS头的四个字节的封装；
-            #s_fc = 0x30, 0011：先有自适应字段，再有有效载荷。
-            s_f = 0x30
+
+        #以后的内容都是在多包的情况进行处理，第一个包的内容应该是含有PCR的数据内容，所以应该是188 = 4+8(PCR)+ 176(部分PES)，可以把PCR的内容直接加到pesdata上
+        pesdata1 = adaptation_field_length.to_bytes(1, byteorder='big') + pcr_flag.to_bytes(1, byteorder='big') + pcr_a + pesdata
+        n_num = len(pesdata1) % 184
+        #如果n_num有余数，则说明可能需要进行填充，如果余数为183，则可以通过一个调节字来完成
+        fill_num = 0
+        have_pcr = True
+
+        if n_num == 183:
+            pesdata1 = pesdata
+            have_pcr = False
+      
+        r_num = int((len(pesdata1) + 183)/184)
+
+        t_len = len(pesdata1)
+        isFirst = True
+        for i in range(0, r_num):
+            s_f = 0x10
+            ts_head = ts_head_no_first            
+            if isFirst:
+                #第一个包内，默认是含有自适应内容，所以标志为0x30，但如果no_pcr = True,则为0x10
+                if have_pcr:
+                    s_f = 0x30
+                ts_head = ts_head_first
+                isFirst = False
+
+            pes_s = pesdata1[i*184:]
+            if len(pesdata1) > 184:
+                pes_s = pes_s[0:184]
+            if len(pes_s) < 184:
+                s_f = 0x30
+                m = 184 - len(pes_s)
+                f_f = [0x00,]
+                for mi in range(2, m):
+                    f_f.append(0xFF)
+                f_len = len(f_f)
+                pes_s = f_len.to_bytes(1, byteorder='big') + bytes(f_f) + pes_s
+
             s_c = self.counter&0x0F
             s_fc = s_f|s_c
-            #含自定义内容，长度是7(PCR)
-            adaptation_field_length = 0x07
-            #PCR标志
-            pcr_flag = 0x10
-            ts_p = ts_p + s_fc.to_bytes(1, byteorder='little') + adaptation_field_length.to_bytes(1, byteorder='little')+pcr_flag.to_bytes(1, byteorder='little')
-            #信息头加上自适应的数据内容；
-            ts_p = ts_p + pcr_a
-            ts_p = ts_p + pesdata[:188-12]
-            if len(ts_p) != 188:
-                print("error1")
-            self.counter = self.counter+1
-            if self.counter > 15:
-                self.counter = 0
-            ts_d.append(ts_p)
 
-        for i in range(1, tnum - 1):
-            p_head = ts_head1
-            #s_fc = 0x10, 0001：只有有效载荷。            
-            s_fc = 0x10
-            s_c = self.counter&0x0F
-            s_fc = s_fc|s_c
-            ts_p = bytes(p_head)+s_fc.to_bytes(1, byteorder='little') + pesdata[176+(i-1)*184:176+i*184]
-            if len(ts_p) != 188:
-                print("error2")            
-            self.counter = self.counter+1
-            if self.counter > 15:
-                self.counter = 0
+            ts_p = bytes(ts_head) + s_fc.to_bytes(1, byteorder='big') + pes_s
+
             ts_d.append(ts_p)
-         
-        if stuff_num > 0:
-            #s_fc = 0x30, 0011：先有自适应字段，再有有效载荷。
-            s_fc = 0x30
-            s_c = self.counter&0x0F
-            #最后一帧没有PCR的内容，所以标志设为0x00
-            pcr_flag = 0x00
-            s_fc = s_fc|s_c
-            ts_p = bytes(ts_head1)+s_fc.to_bytes(1, byteorder='big')
-            #因为填写填充字段的长度就会占用一个字节，后面的长度才是实际填充的长度，所以在计算填充长度时需要减去一个字节；
-            adaptation_field_length = stuff_num - 1
-            ts_p = ts_p+adaptation_field_length.to_bytes(1, byteorder='big')+pcr_flag.to_bytes(1, byteorder='big') 
-            for i in range(2, stuff_num):
-                ts_p = ts_p + (0xFF).to_bytes(1, byteorder='big')               
-            ts_p = ts_p + pesdata[len(pesdata)-184+stuff_num:]
-            if len(ts_p) != 188:
-                print("error3")
-            self.counter = self.counter+1
+            self.counter = self.counter + 1
             if self.counter > 15:
                 self.counter = 0
-            ts_d.append(ts_p)        
+
         return ts_d
 
     #因为只是做协议转换，所以program_number都设置为0x0001; 每个节目号中只有一个节目内容program_map_PID = 0x0001
