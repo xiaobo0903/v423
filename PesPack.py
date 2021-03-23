@@ -104,7 +104,7 @@ class PesPack():
         # pfmt_a = struct.pack('b',pfmt)
         pfmt_a = pfmt.to_bytes(5, byteorder='big')
         l = [hex(int(i)) for i in pfmt_a]
-        print(" ".join(l))
+        # print(" ".join(l))
         return pfmt_a
 
     #在打包过程中需要把整型的pts或dts数值转换成5个字节的数组，并分为三个部分；‘0010’ PTS[32..30] marker_bit PTS[29..15] marker_bit PTS[14..0] marker_bit

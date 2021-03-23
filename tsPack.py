@@ -52,9 +52,9 @@ class tsPack():
 
         #上面是根据视频文件做的判断，还需要加进音频文件的偏离计算；这部分内容在后续增加进去；
         #######################################################################
-        a_start, a_end = self.pes_pack.getAudioRange(self.start, self.end)
-        start_aoff = self._atrak.sample_offset[a_start]
-        end_aoff = self._atrak.sample_offset[a_end]
+        # a_start, a_end = self.pes_pack.getAudioRange(self.start, self.end)
+        # start_aoff = self._atrak.sample_offset[a_start]
+        # end_aoff = self._atrak.sample_offset[a_end]
         #######################################################################
         # start_off = start_voff if start_aoff > start_voff else start_aoff 
         # end_off = end_voff if end_voff > end_aoff else end_aoff 
@@ -79,10 +79,12 @@ class tsPack():
         self.getMp4Data()
         #获取到了原始文件中的相应数据内容；全部帧数据封装后的数组内容
         data_a = self.mk_TSPackages()
-        with open("mmmm.ts", "wb") as f:        
-            for d in data_a:
-                f.write(d)
-        return
+        ret_b = b''
+        # with open("mmmm.ts", "wb") as f:        
+        for d in data_a:
+                # f.write(d)
+            ret_b = ret_b + d
+        return ret_b
 
     #获取SPS的NALU数据
     def getSPSNalu(self):

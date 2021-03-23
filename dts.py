@@ -8,7 +8,7 @@
 # 降低特定场景中视频协议转换的成本（如云环境下）；降低存储的成本，提升用户的体验（加载时间短）
 
 from flask import Flask
-from flask import request, Response
+from flask import request, Response, make_response
 from flask import abort
 from urllib.parse import unquote
 from mp4Tools import mp4Tools
@@ -44,11 +44,11 @@ def dts():
     end = datetime.datetime.now()     
     print(str(end-start)+" 秒")    
     response = Response(ret)
-    response.headers['Content-Type'] = "text/plain"
-    response.headers['Content-Disposition'] = "p_w_upload; filename="+mp4_md5+".m3u8"
+    response.headers['Content-Type'] = "application/vnd.apple.mpegurl"
+    # response.headers['Content-Disposition'] = "p_w_upload; filename="+mp4_md5+".m3u8"
     return response
 
-@app.route("/ts/<md5>", methods=["GET"])
+@app.route("/ts/<md5>.ts", methods=["GET"])
 #此路由的定义是为了提供TS流和在实实时封装和转换工作
 def ts(md5):
     uri = request.path
@@ -56,10 +56,15 @@ def ts(md5):
     b_end = request.args.get("end")
     start = datetime.datetime.now() 
     tspack = tsPack(md5, int(b_start), int(b_end))
-    tspack.getTS()
+    ret_b = tspack.getTS()
+    response = make_response(ret_b)
+    file = md5+".ts?start"+b_start+"&end="+b_end
+    response.headers["Content-Type"] = "video/mp2t"
+    # return response
     end = datetime.datetime.now()     
     print(str(end-start)+" 秒") 
-    return Response(uri+b_start+b_end)
+    return response
+    # return Response(uri+b_start+b_end)
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", debug=True)
+    app.run(host="0.0.0.0", debug=False)

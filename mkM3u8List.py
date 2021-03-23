@@ -10,8 +10,8 @@ from trakData import trakData
 from mp4Tools import mp4Tools
 from mp4Parse import Mp4Parse
 
-TIME_SLICE = 5000
-BASE_URL = "http://10.10.10.101/ts/"
+TIME_SLICE = 10000
+BASE_URL = "http://10.10.10.101:5000/ts/"
 
 class mkM3u8List():
 
@@ -101,12 +101,13 @@ class mkM3u8List():
             if maxtime < sduration:
                 maxtime = sduration
             mt_array.append("#EXTINF:"+str(sduration)+",\n")
-            mt_array.append(BASE_URL+self.mp4_md5+"?start="+str(start)+"&end="+str(end)+"\n")
+            mt_array.append(BASE_URL+self.mp4_md5+".ts?start="+str(start)+"&end="+str(end)+"\n")
         mt_array.append("#EXT-X-ENDLIST\n")
-        mt_array.insert(0,"#EXTM3U\n")
-        mt_array.insert(0,"#EXT-X-VERSION:3\n")
         mt_array.insert(0,"#EXT-X-TARGETDURATION:"+str(int(maxtime+0.99))+"\n")
+        mt_array.insert(0,"#EXT-X-ALLOW-CACHE:YES\n")
         mt_array.insert(0,"#EXT-X-MEDIA-SEQUENCE:0\n")
+        mt_array.insert(0,"#EXT-X-VERSION:3\n")
+        mt_array.insert(0,"#EXTM3U\n")
 
         ret = ""
         with open("test.m3u8", "w") as f:
