@@ -75,22 +75,30 @@ class PesPack():
     # 音频流/视频流：承载音视频内容。
 
     #根据帧数据进行TS的封包, iframe是帧的序号， vdata是帧的h264压缩后的数据；
-    def mk_pesData(self, iframe, offset, vdata):
+    def mk_pesVData(self, iframe, offset, vdata):
         #nalu = 帧数据+sps+pps, 如果打成PES包，还需要加上包头 pes = pes包头+nalu
         dts, pts = self.getVideoDTSPTS(iframe, offset)
         #pes的长度为 5(pts.len)+5(dts.len)+3+vdata.len
         pes_length = len(vdata)+13
         # pes_packet_length = struct.pack('H',pes_length)
-        pes_packet_length = struct.pack('H',0)        
+        pes_packet_length = struct.pack('H',0)
+        # pes的封装内容：4字节音频标识0x000001e0 +  1字节长度(0为不限长度) +pts_dts的标志+pts+dts+nalu数据；    
         pes_data = bytes(self.pes_vstart_code) + pes_packet_length + bytes(self.pes_pts_dts_flag) + pts + dts + vdata
         return pes_data
 
-    # #根据vdata的帧数据内容生成NALU的数据， 主要是前端增加0x00000001;
-    # def mkEsData(self, vdata):
-    #     i_head = struct.pack('3x1b',1)
-    #     f_esData = None
-    #     f_esData = i_head + vdata
-    #     return f_esData
+    #根据帧数据进行TS的封包, iframe是帧起始序号， vdata是帧的h264压缩后的数据； 
+    def mk_pesAData(self, iframe, adata):
+
+        #根据音频的起始和终止的帧，生成音频的帧数据列表, a_start和a_end是音频的起始和终止点,对于音频来说组成的格式是：
+        # 000001 iframe_len(帧长度2字节) 80 80（pts标志) 05（pts长度） pts(5字节) + 音频内容  
+        nau_head = [0x00, 0x00, 0x01, 0xC0]
+        pts_flag = [0x80, 0x80, 0x05 ]
+        #因为后面还有8上字节与pts相关的内容，所以加上了8个字节；
+        a_len = len(adata)+8
+        a_len_b = a_len.to_bytes(2, byteorder='big')
+        pts = self.getAudioPTS(iframe)        
+        f_adata = bytes(nau_head) + a_len_b + bytes(pts_flag) + pts + adata
+        return f_adata
 
     #在打包过程中需要把整型的pts或dts数值转换成5个字节的数组，并分为三个部分；‘0010’ PTS[32..30] marker_bit PTS[29..15] marker_bit PTS[14..0] marker_bit
     def pts_fmt(self, p):
@@ -120,10 +128,25 @@ class PesPack():
         pfmt_a = pfmt.to_bytes(5, byteorder='big')      
         return pfmt_a
 
+    #计算每一帧音频的PTS, offset与DTS是相同的，所以offset=0
+    def getAudioPTS(self, iframe):
+        # PCR是节目时钟参考，也是一种音视频同步的时钟，pcr、dts、pts 都是对同⼀个系统时钟的采样值，pcr 是递增的，因此可以将其设置为 dts 值,
+        # ⾳频数据不需要 pcr(PCR的pid，一般与视频的pid是同一个值)。打包 ts 流时 PAT 和 PMT 表(属于文本数据)是没有 adaptation field，
+        # 视频流和⾳频流都需要加 adaptation field
+        # 音视频数据需要adaptation field。一般在⼀个帧的第⼀个 ts包和最后⼀个 ts 包⾥加adaptation field
+        #音频的每帧的时间刻度
+        #显示时间: PTS = DTS + CompositionTime(offset)
+        b_time = 126000
+        f_timescale = self.ascale
+        f_deltas = self.adeltas
+        audio_frame_rate = f_timescale / f_deltas
+        # f_dts = int(b_time + iframe*(90000 / audio_frame_rate))
+        f_pts = int(b_time + iframe*(90000 / audio_frame_rate))
+        return self.pts_fmt(f_pts)
 
-    #计算每一帧视频的DTS(PCR相同与DTR相同)
+    #计算每一帧视频的DTS(PCR与DTR相同)
     def getVideoDTSPTS(self, iframe, offset):
-        #PCR是节目时钟参考，也是一种音视频同步的时钟，pcr、dts、pts 都是对同⼀个系统时钟的采样值，pcr 是递增的，因此可以将其设置为 dts 值,
+        # PCR是节目时钟参考，也是一种音视频同步的时钟，pcr、dts、pts 都是对同⼀个系统时钟的采样值，pcr 是递增的，因此可以将其设置为 dts 值,
         # ⾳频数据不需要 pcr(PCR的pid，一般与视频的pid是同一个值)。打包 ts 流时 PAT 和 PMT 表(属于文本数据)是没有 adaptation field，
         # 视频流和⾳频流都需要加 adaptation field
         # 音视频数据需要adaptation field。一般在⼀个帧的第⼀个 ts包和最后⼀个 ts 包⾥加adaptation field
@@ -136,6 +159,10 @@ class PesPack():
         video_frame_rate = f_timescale / f_deltas
         f_dts = int(b_time + iframe*(90000 / video_frame_rate))
         f_pts = int(b_time + (iframe+off_n)*(90000 / video_frame_rate))
+        # if self.vbpts == None:
+        #     self.vbpts = f_pts
+        # elif f_pts < self.vbpts:
+        #     self.vbpts = f_pts
         return self.dts_fmt(f_dts), self.pts_fmt(f_pts)
 
     #获取当前帧的DTS用于设置PCR
@@ -155,14 +182,14 @@ class PesPack():
     #根据视频的起始和终止帧号来计算音频的起始和终止的偏移量；
     def getAudioRange(self, start, end):
         
-        b_time = 126000
+        # b_time = 133500
         #vscale = 24000, deltas = 1000
         f_timescale = self.vscale
         f_deltas = self.vdeltas
-        s_time = start * (1000 / (f_timescale / f_deltas))
-        e_time = end * (1000 / (f_timescale / f_deltas))
-        a_start = int(s_time * (1000 / ((self.ascale)/self.adeltas)))
-        a_end = int(e_time * (1000 / ((self.ascale)/self.adeltas)))
+        s_time = start * (1000 * f_deltas / f_timescale )
+        e_time = end * (1000 * f_deltas / f_timescale )
+        a_start = int(s_time * self.ascale / (1000 * self.adeltas))
+        a_end = int(e_time * self.ascale / (1000 * self.adeltas))
         return a_start, a_end
 
     # #计算每一帧音频的DTS(PCR相同)

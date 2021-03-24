@@ -18,8 +18,9 @@ from mp4Parse import Mp4Parse
 from mkM3u8List import mkM3u8List
 from tsPack import tsPack
 
-app = Flask(__name__)     
-@app.route("/dts.m3u8", methods=["GET", "POST"])           
+app = Flask(__name__)
+ 
+@app.route("/dts.m3u8", methods=["GET", "POST"])         
 #添加路由：dts是入口，参数为url=encode(http://1111/ssss/2222.mp4?ssss&ssss)
 #该入口主要是提供实时的获取m3u8的列表，并返回点播的文件内容，其访问的TS文件的地址为：
 # http://{BASE_URL}/ts/md5(url).ts?start=begin_frame&end=end_frame

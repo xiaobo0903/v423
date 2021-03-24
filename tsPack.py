@@ -36,8 +36,9 @@ class tsPack():
         self.pes_pack = PesPack(self._vtrak.timescale, self._vtrak.sample_deltas, self._atrak.timescale, self._atrak.sample_deltas)
         return
         
-    #根据video请求来的内容来生成TS的文件
+    #根据video请求来的内容来生成mp4的文件偏移量，里面即有音频的内容出含有视频的内容；
     def getFileOffset(self):
+
         start_voff = 0
         end_voff = 0       
         #根据偏移量取得文件中的部分内容；
@@ -52,18 +53,18 @@ class tsPack():
 
         #上面是根据视频文件做的判断，还需要加进音频文件的偏离计算；这部分内容在后续增加进去；
         #######################################################################
-        # a_start, a_end = self.pes_pack.getAudioRange(self.start, self.end)
-        # start_aoff = self._atrak.sample_offset[a_start]
-        # end_aoff = self._atrak.sample_offset[a_end]
+        a_start, a_end = self.pes_pack.getAudioRange(self.start, self.end)
+        start_aoff = self._atrak.sample_offset[a_start]
+        end_aoff = self._atrak.sample_offset[a_end]
         #######################################################################
-        # start_off = start_voff if start_aoff > start_voff else start_aoff 
-        # end_off = end_voff if end_voff > end_aoff else end_aoff 
-        start_off = start_voff
-        end_off = end_voff
+        start_off = min(start_aoff, start_voff)
+        end_off = max(end_aoff, end_voff)
+        self.a_start = a_start
+        self.a_end = a_end
         self.abs_offset = start_off
         return start_off, end_off
 
-    #获取mp4片段的数据内容
+    #根据上面获取到的文件偏移量，来通过http的方式下载所需的内容片断，以获取mp4片段的数据内容；
     def getMp4Data(self):
 
         s_off, e_off = self.getFileOffset()
@@ -73,50 +74,27 @@ class tsPack():
         self.abs_soff = s_off
         self.abs_eoff = e_off
 
-    #生成TS
+    #获取通过打包后生成的TS内容
     def getTS(self):
         #从远程服务器上下载相应的片段内容；
         self.getMp4Data()
         #获取到了原始文件中的相应数据内容；全部帧数据封装后的数组内容
         data_a = self.mk_TSPackages()
         ret_b = b''
-        # with open("mmmm.ts", "wb") as f:        
-        for d in data_a:
-                # f.write(d)
-            ret_b = ret_b + d
+        with open("mmmm.ts", "wb") as f:        
+            for d in data_a:
+                f.write(d)
+                ret_b = ret_b + d
         return ret_b
-
-    #获取SPS的NALU数据
-    def getSPSNalu(self):
-        #每个nalu的头部都加 0x00 0x00 0x00 0x01四个字节的头； 
-        start_code = [0x00, 0x00, 0x00, 0x01, 0x27]
-        sps_data = start_code + self._vtrak.sps
-        return sps_data
-
-    #获取PPS的NALU数据
-    def getPPSNalu(self):
-        #每个nalu的头部都加 0x00 0x00 0x00 0x01四个字节的头；         
-        start_code = [0x00, 0x00, 0x00, 0x01, 0x28]
-        pps_data = start_code + self._vtrak.pps
-        return pps_data
-
-    # #获取每一帧的NALU数据, iframe是帧号
-    # def getFrameNalu(self, ifream):
-    #     #每个nalu的头部都加 0x00 0x00 0x00 0x01四个字节的头； 
-    #     start_code = [0x00, 0x00, 0x01]
-    #     f_data = self.getFrameData(ifream)
-    #     f_data1 = start_code + f_data
-    #     return f_data1  
     
-    #获取帧数据,在取帧数据时，会不会有帧数据会分chunk的情况（看网上说的一帧只能在一个chunk内，但是不是这样目前还不确定，如果有的话，会有风险!!!）
-    def getFrameData(self, ifream):
+    #获取视频帧数据,在取帧数据时，会不会有帧数据会分chunk的情况（看网上说的一帧只能在一个chunk内，但是不是这样目前还不确定，如果有的话，会有风险!!!）
+    def getVideoFrameData(self, ifream):
         f_soff = self._vtrak.sample_offset[ifream]
         f_size = self._vtrak.sample_size[ifream]
         f_eoff = f_soff + f_size
         f_data = self.mp4data[f_soff-self.abs_soff:f_eoff-self.abs_soff]
-        #因为提取的h264内容，前四个字节是代表长度，需要把长度的四个字节替换成0x00 0x00 0x00 0x01,这样就完成了NALU的封装的工作；
+        #因为提取的h264内容，前四个字节是代表长度，需要把长度的四个字节去掉，才能够提取到完整的帧数据；，不带SEI信息的内容，应该是计算出的长度与实际长度相等；
         a_fdat = f_data
-
         olen = len(a_fdat)
         o_len = a_fdat[:4]
         h_int = int.from_bytes(o_len, byteorder='big', signed=False)
@@ -124,7 +102,7 @@ class tsPack():
             a_fdat = a_fdat[4:]
             return a_fdat
 
-        #在此只去掉SEI的内容，只保留帧的内容即可；
+        #如果判读出计算的长度与实际长度不相等，则可能会存在SEI的内容，下面需要去除SEI的内容，只保留帧的内容即可；
         while True:
             v_type = a_fdat[4] 
             v_len = a_fdat[:4]
@@ -134,6 +112,11 @@ class tsPack():
             if h_int1 > len(a_fdat):
                 a_fdat = f_data
                 break
+                # 1：非IDR图像中不采用数据划分的片段
+                # 2：非IDR图像中A类数据划分片段
+                # 3：非IDR图像中B类数据划分片段
+                # 4：非IDR图像中C类数据划分片段
+                # 5：IDR图像的片段
             if v_type1 in (0x01, 0x02, 0x03, 0x04, 0x05):
                 a_fdat = a_fdat[4:]
                 break
@@ -141,42 +124,133 @@ class tsPack():
 
         return a_fdat
 
-    # #根据起始的帧和终止帧提取数据中的NALU的内容；
+    #获取音频帧数据；
+    #音频封装的时候，一定需要加入ADTS头的内容，说明如下：
+    # syncword              12b     固定为0xfff
+    # id                    1b      0:mpeg-4, 1:mpeg-2
+    # layer                 2b      00
+    # protection_absent     1b      固定为1
+
+    # profile               2b      0-3 1:aac
+    # simple_index          4b      0:96000 1:882000 2:64000 3:48000 4:44100 5:32000 6:24000 7:22050 8:16000 9:12000 10:11025 11:8000 12:7350
+    # private_bit           1b      0
+    # channel_on            3b      1-4:channel
+    # original-copy         1b      0
+    # home                  1b      0
+    # copyright-bit         1b      0
+    # copyright-start       1b      0
+    # aac_frame_length      13b     含ADTS的总长度
+    # adts-fill             11b     固定为:0x7FF
+    # number-of-raw-
+    # data-black-inframe    2b      固定为00
+
+    def getAudioFrameData(self, ifream):
+
+        ADTS_0_15 = 0xFFF10000000000
+        f_soff = self._atrak.sample_offset[ifream]
+        f_size = self._atrak.sample_size[ifream]
+        f_eoff = f_soff + f_size
+        f_data = self.mp4data[f_soff-self.abs_soff:f_eoff-self.abs_soff]
+        #音频的封装并没有其它的内容需要处理，只是提取相应的数据即可
+        #打包aac⾳频必须加上⼀个adts(Audio Data Transport Stream)头
+        #计算包的长度和后面的11位内容，共为3个字节，24位；
+        a_len = f_size + 7
+        b24 = (a_len<<11)|0x7FF
+        #根据 trak.vscale来提取simple_index值, 默认48000
+        sample_index = 3
+
+        asdict = { "96000":0, "88200":1, "64000":2, "48000":3, "44100":4, "32000":5, "24000":6, "22050":7, "16000":8, "12000":9, "11025":10, "8000":11,"7350":12}
+        a_sample = str(self._atrak.timescale)
+        if a_sample in asdict:
+            sample_index = asdict[a_sample]
+        
+        ADTS_16_17 = 0x4000000000
+        ADTS_16_26 = (sample_index<<34) | 0x80000000
+        ADTS_27_55 = b24<<2
+
+        ADTS_ALL = ADTS_0_15|ADTS_16_17|ADTS_16_26|ADTS_27_55
+        adts_head = ADTS_ALL.to_bytes(7, byteorder='big')
+        
+        ret_data = adts_head + f_data 
+        return ret_data
+
+    # #根据起始的帧和终止帧生成PES的数据内容；
     def mk_TSPackages(self):
         #根据帧数来生成TS的数据
         self.counter = 0
-        ts_all = []
-        #在进行nalu封装的时候，需要设定帧开始的标志 0x0000000109f0
+        ts_vall = []
+        #在每一帧的视频帧被打包到pes的时候，其开头必定要加上 00 00 00 01 09 xx  这个nal。不然就有问题，这是苹果官网中的要求
         nau = [0x00, 0x00, 0x00, 0x01, 0x09, 0xf0]
         nalu = [0x00, 0x00, 0x00, 0x01]        
-        # nalu_k = [0x00, 0x00, 0x00, 0x01, 0x65]
-        # nalu_nk = [0x00, 0x00, 0x00, 0x01, 0x61]
+        #根据视频的起始和终止的帧，生成视频的帧数据列表
         for i in range(self.start, self.end):
             #返回帧的原始数据
-            f_data = self.getFrameData(i)
+            f_data = self.getVideoFrameData(i)
             # self.printHex(f_data, 1024*1024)
             #把帧的原始数据进行ES打包
             # f_data1 = self.pes_pack.mkEsData(f_data)
 
             f_data1 = bytes(nalu) + f_data
-            #如果是第一帧还需要加入SPS和PPS的信息, 另外第一帧为关键帧所以需要加入valu的标志65
+            #如果是第一帧还需要加入SPS和PPS的信息,切割后的第一帧都为关键帧
             if i == self.start:
                 f_data1 = bytes(nalu)+ self._vtrak.sps + bytes(nalu)+ self._vtrak.pps + bytes(nalu) + f_data
             #nalu = 帧数据+sps+pps, 如果打成PES包，还需要加上包头 pes = pes包头+nalu
             offset = self._vtrak.sample_decode_off[i]
             f_data1 = bytes(nau) + f_data1
-            pes_data = self.pes_pack.mk_pesData(i, offset, f_data1)
+            pes_data = self.pes_pack.mk_pesVData(i, offset, f_data1)
             #每个帧的头一个包中应含有PCR的内容
             pcr = self.pes_pack.getDTS(i)
             ts_f_data = self.ts_vpack(pes_data, pcr)
-            ts_all = ts_all + ts_f_data
+            ts_vall.append(ts_f_data)
+
+        ts_aall = []
+        self.counter = 0
+        #根据音频的起始和终止的帧，生成音频的帧数据列表, a_start和a_end是音频的起始和终止点,对于音频来说组成的格式是：
+        # 000001 iframe_len(帧长度2字节) 80 80（pts标志) 05（pts长度） pts(字节) + 音频内容
+        # 下面要进行音频的封装的工作，计算一下几个音频的sample可以打包成一个pes进行传输；
+        a_v_num =  int (((self.a_end - self.a_start) / (self.end - self.start)) * 6)
+        au_data = b""
+        m = 0
+        a_frame = -1
+        for i in range(self.a_start, self.a_end):
+            if a_frame == -1:
+                a_frame = i
+            #返回音频帧的原始数据
+            f_adata = self.getAudioFrameData(i)
+            au_data = au_data + f_adata
+            m = m+1
+            if m == a_v_num:
+                #对于音频来说，可以把多个sample打包成一个pes包进行传输；只设置一个pts即可；
+                pes_adata = self.pes_pack.mk_pesAData(a_frame, au_data)
+                ts_f_adata = self.ts_apack(pes_adata)
+                ts_aall.append(ts_f_adata)
+                m = 0
+                au_data = b""
+                a_frame = -1
+
+        if len(au_data) > 0:
+            pes_adata = self.pes_pack.mk_pesAData(a_frame, au_data)
+            ts_f_adata = self.ts_apack(pes_adata)
+            ts_aall.append(ts_f_adata)            
+
         pat = self.getPAT()
         pmt = self.getPMT()
-        ts_all1 = []
-        ts_all1.append(bytes(pat))
-        ts_all1.append(bytes(pmt))        
-        ts_all1 = ts_all1 + ts_all
-        return ts_all1
+        ts_all = []
+        ts_all.append(bytes(pat))
+        ts_all.append(bytes(pmt))        
+        #以视频为主来生成最终的TS包，每7个视频后加一个音频的包内容；
+        i = 0
+        for vts in ts_vall:
+            i = i + 1
+            ts_all = ts_all + vts
+            if i == 6:
+                ts_all = ts_all + ts_aall[0]
+                ts_aall = ts_aall[1:]
+                i = 0
+        
+        for ts_a in ts_aall:
+            ts_all = ts_all + ts_a
+        return ts_all
     
     #针对于pes_data数据进行TS的封包操作；TS包每个长度是188，所以需要把一帧的数据按TS的格式进行封装；ts_vpack是视频包的封装操作；
     def ts_vpack(self, pesdata, pcr):
@@ -275,6 +349,93 @@ class tsPack():
 
         return ts_d
 
+    #针对于pes_data的音频数据进行TS的封包操作；TS包每个长度是188，所以需要把一帧的数据按TS的格式进行封装
+    def ts_apack(self, pesdata):
+
+        ret = []
+        #一帧的数据的第一个包头；
+        ts_head_first = [0x47, 0x41, 0x01]
+        #一帧的数据的非第一个包头；
+        ts_head_no_first = [0x47, 0x01, 0x01]
+        #后面是自适应字段的封装，如果第一个包的长度小于188-4-2，则需要进行填充0xFF；
+
+        #第一个包一定是带有自适应的标记的，所以 0011，即0x30
+        s_f = 0x30
+
+        #下面再处理第一帧设置为不带PCR内容，因为音频不需加PCR的内容，
+        pcr_flag = 0x40
+        #缺省的长度是0x01
+        adaptation_field_length = 0x01
+        fill_data = []
+        ts_d = []
+        # 所以 如果长度< =182，则需要填充；
+        if len(pesdata) <= 182:
+            fill_num = 182 - len(pesdata)
+            adaptation_field_length1 = adaptation_field_length  + fill_num
+            a_fill = []
+            for i in range(0, fill_num):
+                a_fill.append(0xFF)
+            pesdata = bytes(a_fill)+pesdata
+            s_f = 0x30
+            s_c = self.counter&0x0F
+            s_fc = s_f|s_c
+            ts_p = bytes(ts_head_first) + s_fc.to_bytes(1, byteorder='big') + adaptation_field_length1.to_bytes(1, byteorder='big') + pcr_flag.to_bytes(1, byteorder='big') + pesdata
+            self.counter = self.counter + 1
+            if self.counter > 15:
+                self.counter = 0
+            ts_d.append(ts_p)
+            return ts_d
+
+        #以后的内容都是在多包的情况进行处理，第一个包的内容应该是含有PCR的标志位数据内容，所以应该是188 = 4+2+ 182(部分PES)，
+        pesdata1 = adaptation_field_length.to_bytes(1, byteorder='big') + pcr_flag.to_bytes(1, byteorder='big') + pesdata
+        n_num = len(pesdata1) % 184
+        #如果n_num有余数，则说明可能需要进行填充，如果余数为183，则可以通过一个调节字来完成
+        fill_num = 0
+        have_pcr = True
+
+        if n_num == 183:
+            pesdata1 = pesdata
+            have_pcr = False
+      
+        r_num = int((len(pesdata1) + 183)/184)
+
+        t_len = len(pesdata1)
+        isFirst = True
+        for i in range(0, r_num):
+            s_f = 0x10
+            ts_head = ts_head_no_first            
+            if isFirst:
+                #第一个包内，默认是含有自适应内容，所以标志为0x30，但如果no_pcr = True,则为0x10
+                if have_pcr:
+                    s_f = 0x30
+                ts_head = ts_head_first
+                isFirst = False
+
+            pes_s = pesdata1[i*184:]
+            if len(pesdata1) > 184:
+                pes_s = pes_s[0:184]
+            if len(pes_s) < 184:
+                s_f = 0x30
+                m = 184 - len(pes_s)
+                f_f = [0x00,]
+                for mi in range(2, m):
+                    f_f.append(0xFF)
+                f_len = len(f_f)
+                pes_s = f_len.to_bytes(1, byteorder='big') + bytes(f_f) + pes_s
+
+            s_c = self.counter&0x0F
+            s_fc = s_f|s_c
+
+            ts_p = bytes(ts_head) + s_fc.to_bytes(1, byteorder='big') + pes_s
+
+            ts_d.append(ts_p)
+            self.counter = self.counter + 1
+            if self.counter > 15:
+                self.counter = 0
+
+        return ts_d
+
+
     #因为只是做协议转换，所以program_number都设置为0x0001; 每个节目号中只有一个节目内容program_map_PID = 0x0001
     def getPAT(self):
        
@@ -294,8 +455,10 @@ class tsPack():
     #     for item in pat_d:
     #         print("0x%X,"%item, end=' ')
     #   pid = 1 0000 0000 0000        
-        pat_d = [0x47, 0x40, 0x00, 0x10, 0x00, 0x00, 0xB0, 0x0D, 0x00, 0x01, 0xC1, 0x00, 0x00, 
-        #表示这是一个PAT
+        pat_d = [0x47, 0x40, 0x00, 0x10, 
+        #pid=0x0000 表示这是一个PAT
+        0x00, 0x00, 
+        0xB0, 0x0D, 0x00, 0x01, 0xC1, 0x00, 0x00, 
         0x00, 0x01,
         #表示这个PID= 1 0000 0000 0000 
         0xF0, 0x00, 
@@ -325,17 +488,18 @@ class tsPack():
         # #每个TS的Package的长度是188个字节，所以需要整理成188个字节的list
         # pmt_d = pmt_head + o_c + crc
     #   pid = 1 0000 0000 0000 
-        pmt_d = [0x47, 0x50, 0x00, 0x10, 0x00, 
-                0x02, 
+        pmt_d = [0x47, 0x50, 0x00, 0x10,           
+                0x00, 0x02,
+                #长度是1D  
                 0xB0, 0x1D, 
                 0x00, 0x01, 
                 0xC1, 0x00,
-                #指定视频的pid（package - id)
                 0x00, 0xE1, 
                 0x00, 0xF0, 0x00, 
                 0x1B, 0xE1, 
                 0x00, 0xF0, 
                 0x00, 0x0F, 
+                #流类型0xE1，代表视频，
                 0xE1, 0x01, 0xF0, 0x06, 0x0A, 
                 0x04, 0x7A, 0x68, 0x6F, 0x00, 
                 0x11, 0x65, 0x79, 0x85]
@@ -355,37 +519,3 @@ class tsPack():
             print("0x%02X,"%item, end=' ') 
             if i > vnum:
                 break
-
-    # #根据起始的帧和终止帧提取数据中的NALU的内容；
-    # def getVideoNALUData(self, sframe, eframe, vdata):
-    
-    #     self.vframelist = []
-    #     s = eframe - sframe
-    #     s_offset = self.abs_offset
-    #     f = open("lldq_"+str(sframe)+"_"+str(eframe)+".h264", "wb+")
-    #     i_head = struct.pack('3x1b',1)
-    #     f.write(i_head)
-    #     f.write(self._vtrak.sps)
-    #     f.write(i_head)        
-    #     f.write(self._vtrak.pps)        
-    #     for k in range(0, s):
-    #         vdata1 = None
-    #         s_pos =  self._vtrak.sample_offset[sframe+k-1]
-    #         p_size =  self._vtrak.sample_size[sframe+k-1]            
-    #         c_offset = s_pos - s_offset
-    #         #获取前端的4个字节，变换成长度，一个nalu中可能存在多个帧的情况，该种情况，可以通过检查sample_size与s_len的长度来进行判读，
-    #         #如果s_len的长度小于sample_size说明后面还有数据面要处理；
-    #         s_alen = 0
-    #         while True:
-    #             s_len = vdata[c_offset+s_alen:c_offset+4+s_alen]
-    #             h_int = int.from_bytes(s_len, byteorder='big', signed=False)
-    #             vdata1 = vdata[c_offset+s_alen+4:c_offset+4+s_alen+h_int]
-    #             self.vframelist.append(vdata1)
-    #             f.write(i_head)                
-    #             f.write(vdata1)
-    #             # with open("lldq_"+str(10000+k)+".h264", "wb+") as f1:           
-    #             #     f1.write(i_head)
-    #             #     f1.write(vdata1)                  
-    #             s_alen = s_alen + 4 + h_int
-    #             if s_alen >= p_size:
-    #                 break
