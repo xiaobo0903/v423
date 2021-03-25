@@ -152,6 +152,8 @@ class PesPack():
         # 音视频数据需要adaptation field。一般在⼀个帧的第⼀个 ts包和最后⼀个 ts 包⾥加adaptation field
         #音频的每帧的时间刻度
         #显示时间: PTS = DTS + CompositionTime(offset)
+        if iframe > 103:
+            print(iframe)
         b_time = 126000
         f_timescale = self.vscale
         f_deltas = self.vdeltas
@@ -159,6 +161,7 @@ class PesPack():
         video_frame_rate = f_timescale / f_deltas
         f_dts = int(b_time + iframe*(90000 / video_frame_rate))
         f_pts = int(b_time + (iframe+off_n)*(90000 / video_frame_rate))
+        print(f_pts)
         # if self.vbpts == None:
         #     self.vbpts = f_pts
         # elif f_pts < self.vbpts:

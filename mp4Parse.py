@@ -20,7 +20,7 @@ from trakData import trakData
 class Mp4Parse():
     
     #furl是需要分析的网络文件地址，把远程的文件头读到本地，进行本地文件的处理；
-    def __init__(self, url, head_chunk, mp4_md5):
+    def __init__(self, url, mp4_md5):
         
         #设置m3u8的每个时间片的时长为5秒(5000ms)
         self.mp4_md5 = mp4_md5
@@ -35,10 +35,30 @@ class Mp4Parse():
         self.abs_offset = 0
         self.vframelist = []
         self.aframelist = []
-        self._chunk = head_chunk       
-                                           
+        # self._chunk = head_chunk 
+     
+    #根据获取的头数据，判断moov是所在的位置，然后再进行获取，主要是偏移量,因为有时moov在尾部，所以需要
+    def getMoovOffset(self, hdata):
+        seek = 0
+        b_off = 0
+        e_off = 0
+        while seek < len(hdata):
+            data = hdata[seek:seek+8]
+            dlen, dtype = struct.unpack(">I4s", data)
+            print(dtype)
+            b_off = seek
+            e_off = b_off + dlen          
+            if dtype == b"moov":
+                return b_off, e_off
+            seek += dlen 
+        #如果头中不含有moov的数据，则认为其在文件的尾部
+        b_off = seek
+        #一般moov的数据小于5M，所以最多获取5M的内容；
+        e_off = b_off+1024*1024*5
+        return b_off, e_off 
+
     #获取mp4第一层的数据,ftyp和moov的数据
-    def getOneBoxData(self):
+    def getOneBoxData(self, ):
         seek = 0
         while seek < len(self._chunk):
             data = self._chunk[seek:seek+8]
@@ -50,9 +70,11 @@ class Mp4Parse():
                 break
  
     #获取mp4第二层的数据,解析moov的数据(mvhd,iods,trak)
-    def getTrakDat(self):
+    def getTrakDat(self, moov_data):
         seek = 0
-        adata = self._boxData[b"moov"]
+        tdata = moov_data[seek:seek+8]        
+        dlen, dtype = struct.unpack(">I4s", tdata)
+        adata = moov_data[8:dlen]
         while seek < len(adata):
             data = adata[seek:seek+8]
             dlen, dtype = struct.unpack(">I4s", data)
@@ -61,10 +83,10 @@ class Mp4Parse():
             seek += dlen
 
     #根据trak中的数据，解析出所需要的内容；
-    def getTrak(self):
+    def getTrak(self, moov_data):
 
-        self.getOneBoxData()
-        self.getTrakDat()
+        # self.getOneBoxData(vdata)
+        self.getTrakDat(moov_data)
         for tdat in self._trakdat: 
             trakclass = trakClass(tdat)
             mp4set = trakclass.analyze()
@@ -75,8 +97,8 @@ class Mp4Parse():
                 self._atrak = mp4set
 
     #save Trak to Redis
-    def saveTrakData(self):
-        self.getTrak()
+    def saveTrakData(self, moov_data):
+        self.getTrak(moov_data)
         trakdata = trakData()         
         trakdata.putTrakData(self.url, self.mp4_md5, self._vtrak, self._atrak)
 

@@ -42,7 +42,13 @@ class mp4Tools():
     #根据批定位置，下载
     def down_Mp4Slice(self, url, mp4_md5, s_off, e_off):
    
-        req =  urllib.request.Request(url.decode()) 
+        # req =  urllib.request.Request(url.decode()) 
+        url1 = ""
+        if type(url) is bytes:
+            url1 = url.decode()
+        else:
+            url1 = url
+        req =  urllib.request.Request(url1) 
         req.add_header('Range', 'bytes='+str(s_off)+'-'+str(e_off)) # set the range, from 0byte to 19byte, 20bytes len 
         res = urllib.request.urlopen(req)         
         data = None

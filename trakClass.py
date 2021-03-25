@@ -273,79 +273,64 @@ class trakClass():
         if self._stco:
             data = self._stco[:16]
             dlen, dary = struct.unpack(">I8xI", data)
-            for i in range(0, dlen, 4):
-                h_int1 = int.from_bytes(self._stco[16+i:16+i+4], byteorder='big', signed=False)                              
+            data = self._stco[16:]
+            for i in range(0, dary):
+                h_int1 = int.from_bytes(data[i*4:i*4+4], byteorder='big', signed=False)
                 self.chunks_offset.append(h_int1)
 
-    #获取视频中的帧的chunk列表；从stsc中获取
+    #在此处进行sample_offset的偏移量的计算；获取chunk的数量，再获取每个chunk的offset，再根据每个chunk中包含的sample的数量，再根据sample的size计算每个sample的offset
     def getSampleChunk(self):
 
+        #根据stsc的数据生成每个sample的数据
+        sample_ar = []
+        #极据chunks_offset 生成chunk的列表
+        chunk_list = [0]*len(self.chunks_offset)
         if self._stsc:
             data = self._stsc[:16]
             dlen, dary = struct.unpack(">I8xI", data)
             o_chunk = 0
             o_num = 0
-            for i in range(0, dlen, 12):
+            data = self._stsc[16:]
+            for i in range(0, dary):
                 #h_int1为取得的chunk的ID号，从1开始，为了保证后续的简单，把chunk的编号设为从0开始；
-                h_int1 = int.from_bytes(self._stsc[16+i:16+i+4], byteorder='big', signed=False)
-                h_int2 = int.from_bytes(self._stsc[16+i+4:16+i+8], byteorder='big', signed=False)
+                h_int1 = int.from_bytes(data[i*12:i*12+4], byteorder='big', signed=False)
+                h_int2 = int.from_bytes(data[i*12+4:i*12+8], byteorder='big', signed=False)
+                chunk_list[h_int1-1] = h_int2
+            #因为stsc中chunk的数据有跳跃，所以需要把chunk_list中的数据为0用前一个值替换
+            val = 0
+            for i in range(0, len(chunk_list)):
+                if val == 0:
+                    val = chunk_list[i]
+                    continue
+                if chunk_list[i] > 0:
+                    val = chunk_list[i]
+                if chunk_list[i] == 0:
+                    chunk_list[i] = val
+            
+            #根据chunk_list中的内容，生成sample_offset表；
+            for i in range(0, len(chunk_list)):
+                ck_off = self.chunks_offset[i]
+                sz_off = 0
+                for m in range(0, chunk_list[i]):
+                    s_off = ck_off + sz_off
+                    sz_off = sz_off + self.sample_size[len(self.sample_offset)]
+                    self.sample_offset.append(s_off)
+        return
 
-                sc = h_int1 - o_chunk - 1
-                if sc > 1:
-                    for h in range(0, sc, 1):
-                        isFirst = True   
-                        c_offset = self.chunks_offset[o_chunk]                                                                     
-                        o_offset = 0                   
-                        for k in range(0, o_num):
-                            if isFirst:
-                                self.chunks_samples.append(o_chunk)
-                                self.sample_offset.append(c_offset)
-                                isFirst = False
-                                continue                              
-                            s_num = len(self.sample_offset)
-                            self.chunks_samples.append(o_chunk)
-                            o_offset = o_offset + self.sample_size[s_num-1]
-                            self.sample_offset.append(c_offset + o_offset)
-                            # print(self.sample_size[s_num-1])
-                            # print(c_offset + o_offset)
-                        o_chunk += 1                                                       
-
-                isFirst = True
-                s_offset = self.chunks_offset[h_int1-1]
-                o_offset = 0              
-                for k in range(0, h_int2):
-                    self.chunks_samples.append(h_int1)                    
-                    if isFirst:
-                        self.sample_offset.append(s_offset)
-                        # print(s_offset)                         
-                        isFirst = False
-                        continue
-                    #如果sample_offset中有数据，则取最后的值+sample_size就是本sample的偏移量
-                    s_num = len(self.sample_offset)
-                    o_offset = o_offset + self.sample_size[s_num-1]
-                    # print(self.sample_size[s_num-1])
-                    self.sample_offset.append(s_offset+o_offset)
-                    # print(s_offset+o_offset)                                                          
-                o_chunk = h_int1
-                o_num = h_int2
-                # print("o_chunk:"+str(o_chunk))
-                # print("o_num:"+str(o_num))              
-        return  
     #获取各帧的偏移量数据 DTS和PTS的偏移量，有的文章说ctts可能没有，但这个是在有的情况下进行的分析，没有的情况下可能会出错；
     def getPTSDTSOffert(self):
 
         if self._ctts:
             data = self._ctts[:16]
             dlen, dary = struct.unpack(">I8xI", data)
-            for i in range(0, dlen-16, 8):
+            data = self._ctts[16:]
+            for i in range(0, dary):
                 #h_int1为取得的chunk的ID号，从1开始，为了保证后续的简单，把chunk的编号设为从0开始；
-                h_int1 = int.from_bytes(self._ctts[16+i:16+i+4], byteorder='big', signed=False)
-                h_int2 = int.from_bytes(self._ctts[16+i+4:16+i+8], byteorder='big', signed=False)
+                h_int1 = int.from_bytes(data[i*8:i*8+4], byteorder='big', signed=False)
+                h_int2 = int.from_bytes(data[i*8+4:i*8+8], byteorder='big', signed=False)
                 for m in range(0, h_int1):
                     self.sample_decode_off.append(h_int2)
         return 
-
-
 
     #根据帧序号获取file的偏移量
     def getFileOffsetByFrame(self, nframe):

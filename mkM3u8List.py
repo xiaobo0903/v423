@@ -10,7 +10,7 @@ from trakData import trakData
 from mp4Tools import mp4Tools
 from mp4Parse import Mp4Parse
 
-TIME_SLICE = 10000
+TIME_SLICE = 2000
 BASE_URL = "http://10.10.10.101:5000/ts/"
 
 class mkM3u8List():
@@ -28,13 +28,16 @@ class mkM3u8List():
         #如果视频数据没有取出，则需要进行获取，并何存到redis
         if vtrak == None:
             mh = mp4Tools()
-            hdata = mh.down_Head(url, mp4_md5)
+            hdata = mh.down_Mp4Slice(url, mp4_md5, 0, 2048)
+            # hdata = mh.down_Head(url, mp4_md5)
             if hdata == None:
                 return None
 
-            mpp = Mp4Parse(url, hdata, mp4_md5)
+            mpp = Mp4Parse(url, mp4_md5)
+            begin, end = mpp.getMoovOffset(hdata)
+            moov_data = mh.down_Mp4Slice(url, mp4_md5, begin, end)
             #把解析出的视频和音频轨的数据放入到redis数据库中
-            mpp.saveTrakData()
+            mpp.saveTrakData(moov_data)
 
         vtrak, atrak = trakdata.getTrakData(mp4_md5)
         self._vtrak = vtrak
