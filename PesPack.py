@@ -189,6 +189,8 @@ class PesPack():
         s_time = start * (1000 * f_deltas / f_timescale )
         e_time = end * (1000 * f_deltas / f_timescale )
         a_start = int(s_time * self.ascale / (1000 * self.adeltas))
+        if a_start > 0:
+            a_start = a_start-1
         a_end = int(e_time * self.ascale / (1000 * self.adeltas))
         return a_start, a_end
 

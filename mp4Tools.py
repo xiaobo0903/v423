@@ -29,12 +29,12 @@ class mp4Tools():
         fn = "./"+mp4_md5
         r = requests.get(url, stream = True)
         try:        
-            with open(fn, 'wb') as f:
-                for chunk in r.iter_content(chunk_size = HEAD_SIZE):
-                    if chunk and r.status_code == 200:
-                        f.write(chunk)
-                        _chunk = chunk
-                        break
+            # with open(fn, 'wb') as f:
+            for chunk in r.iter_content(chunk_size = HEAD_SIZE):
+                if chunk and r.status_code == 200:
+                        # f.write(chunk)
+                    _chunk = chunk
+                    break
         except:
             _chunk = None
         return _chunk
@@ -48,8 +48,8 @@ class mp4Tools():
         data = None
         try:
             data = res.read()
-            with open(mp4_md5+"_"+str(s_off)+"_"+str(e_off)+".mp4", "wb+") as f:
-                f.write(data)
+            # with open(mp4_md5+"_"+str(s_off)+"_"+str(e_off)+".mp4", "wb+") as f:
+            #     f.write(data)
             return data
         except:
             return None

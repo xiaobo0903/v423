@@ -10,6 +10,7 @@ from mp4Tools import mp4Tools
 from PesPack import PesPack
 import tsCRC32
 import struct
+import os
 
 class tsPack():
 
@@ -30,6 +31,7 @@ class tsPack():
         self.url = trakdata.getMp4Url(mp4_md5)
         self._vtrak = None
         self._atrak = None
+        self.tfile = str(self.mp4_md5)+"_"+str(start)
         #通过md5获取保存在redis中的mp4相关头数据信息
         self._vtrak, self._atrak = trakdata.getTrakData(mp4_md5)
         #初始化设置pes打包实例
@@ -81,10 +83,13 @@ class tsPack():
         #获取到了原始文件中的相应数据内容；全部帧数据封装后的数组内容
         data_a = self.mk_TSPackages()
         ret_b = b''
-        with open("mmmm.ts", "wb") as f:        
+        with open(self.tfile, "wb") as f:        
             for d in data_a:
                 f.write(d)
-                ret_b = ret_b + d
+        with open(self.tfile, "rb") as f1: 
+            ret_b = f1.read()
+
+        os.remove(self.tfile)
         return ret_b
     
     #获取视频帧数据,在取帧数据时，会不会有帧数据会分chunk的情况（看网上说的一帧只能在一个chunk内，但是不是这样目前还不确定，如果有的话，会有风险!!!）
@@ -229,6 +234,11 @@ class tsPack():
                 a_frame = -1
 
         if len(au_data) > 0:
+            #如果不处理的话，可能会导致音频打包过长
+            #还是进行a_v_num长度的整合；
+            if len(au_data) > a_v_num:
+                au_data = au_data[:a_v_num]
+
             pes_adata = self.pes_pack.mk_pesAData(a_frame, au_data)
             ts_f_adata = self.ts_apack(pes_adata)
             ts_aall.append(ts_f_adata)            

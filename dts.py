@@ -59,7 +59,7 @@ def ts(md5):
     tspack = tsPack(md5, int(b_start), int(b_end))
     ret_b = tspack.getTS()
     response = make_response(ret_b)
-    file = md5+".ts?start"+b_start+"&end="+b_end
+    # file = md5+".ts?start"+b_start+"&end="+b_end
     response.headers["Content-Type"] = "video/mp2t"
     # return response
     end = datetime.datetime.now()     
