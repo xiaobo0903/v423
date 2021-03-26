@@ -24,12 +24,14 @@ class PesPack():
     # vdata是视频帧的数据, vscale是视频采样率，vdetas是视频的刻度， 
     # adata是视频帧的数据, ascale是音频采样率，adetas是音频的刻度;
     # voffset是视频的解码的时间差，aoffset是音频的解码时间差
-    def __init__(self, vscale, vdeltas, ascale, adeltas):
+    def __init__(self, vscale, vsample_time_site, ascale, asample_time_site):
 
         self.vscale = vscale
-        self.vdeltas = vdeltas
+        self.vsample_time_site = vsample_time_site
         self.ascale = ascale
-        self.adeltas = adeltas
+        self.asample_time_site = asample_time_site
+        self.vlen = len(vsample_time_site)
+        self.alen = len(asample_time_site)
     #下面是关于PES的相关说明：
     #     # pes start code	3Byte	开始码，固定为0x000001
     #     # stream id	1Byte	音频取值（0xc0-0xdf），通常为0xc0 视频取值（0xe0-0xef），通常为0xe0
@@ -136,12 +138,19 @@ class PesPack():
         # 音视频数据需要adaptation field。一般在⼀个帧的第⼀个 ts包和最后⼀个 ts 包⾥加adaptation field
         #音频的每帧的时间刻度
         #显示时间: PTS = DTS + CompositionTime(offset)
-        b_time = 126000
-        f_timescale = self.ascale
-        f_deltas = self.adeltas
-        audio_frame_rate = f_timescale / f_deltas
-        # f_dts = int(b_time + iframe*(90000 / audio_frame_rate))
-        f_pts = int(b_time + iframe*(90000 / audio_frame_rate))
+        # b_time = 126000
+        # f_timescale = self.ascale
+        # f_deltas = self.adeltas
+        # audio_frame_rate = f_timescale / f_deltas
+        # # f_dts = int(b_time + iframe*(90000 / audio_frame_rate))
+        # f_pts = int(b_time + iframe*(90000 / audio_frame_rate))
+        # return self.pts_fmt(f_pts)
+        b_offset = 135000
+        f_deltas = 0
+        if iframe > 0:
+            f_deltas = self.asample_time_site[iframe - 1]
+
+        f_pts = int((f_deltas * 90000) / self.ascale) + b_offset
         return self.pts_fmt(f_pts)
 
     #计算每一帧视频的DTS(PCR与DTR相同)
@@ -152,20 +161,13 @@ class PesPack():
         # 音视频数据需要adaptation field。一般在⼀个帧的第⼀个 ts包和最后⼀个 ts 包⾥加adaptation field
         #音频的每帧的时间刻度
         #显示时间: PTS = DTS + CompositionTime(offset)
-        if iframe > 103:
-            print(iframe)
-        b_time = 126000
-        f_timescale = self.vscale
-        f_deltas = self.vdeltas
-        off_n = offset / f_deltas
-        video_frame_rate = f_timescale / f_deltas
-        f_dts = int(b_time + iframe*(90000 / video_frame_rate))
-        f_pts = int(b_time + (iframe+off_n)*(90000 / video_frame_rate))
-        print(f_pts)
-        # if self.vbpts == None:
-        #     self.vbpts = f_pts
-        # elif f_pts < self.vbpts:
-        #     self.vbpts = f_pts
+        b_offset = 126000
+        f_deltas = 0
+        if iframe > 0:
+            f_deltas = self.vsample_time_site[iframe - 1]
+
+        f_dts = int((f_deltas * 90000) / self.vscale) + b_offset
+        f_pts = int(((f_deltas + offset) * 90000) / self.vscale) + b_offset
         return self.dts_fmt(f_dts), self.pts_fmt(f_pts)
 
     #获取当前帧的DTS用于设置PCR
@@ -175,61 +177,75 @@ class PesPack():
         # 视频流和⾳频流都需要加 adaptation field
         # 音视频数据需要adaptation field。一般在⼀个帧的第⼀个 ts包和最后⼀个 ts 包⾥加adaptation field
         #音频的每帧的时间刻度
-        b_time = 133500
-        f_timescale = self.vscale
-        f_deltas = self.vdeltas
-        video_frame_rate = f_timescale / f_deltas
-        f_dts = int(b_time + iframe*(90000 / video_frame_rate))
+        # b_time = 133500
+        # f_timescale = self.vscale
+        # f_deltas = self.vdeltas
+        # video_frame_rate = f_timescale / f_deltas
+        # f_dts = int(b_time + iframe*(90000 / video_frame_rate))
+        b_offset = 126000       
+        f_deltas = 0
+        if iframe > 0:
+            f_deltas = self.vsample_time_site[iframe - 1]
+        f_dts = int((f_deltas * 90000) / self.vscale) + b_offset
+
         return f_dts
 
     #根据视频的起始和终止帧号来计算音频的起始和终止的偏移量；
     def getAudioRange(self, start, end):
         
-        # b_time = 133500
-        #vscale = 24000, deltas = 1000
-        f_timescale = self.vscale
-        f_deltas = self.vdeltas
-        s_time = start * (1000 * f_deltas / f_timescale )
-        e_time = end * (1000 * f_deltas / f_timescale )
-        a_start = int(s_time * self.ascale / (1000 * self.adeltas))
-        if a_start > 0:
-            a_start = a_start-1
-        a_end = int(e_time * self.ascale / (1000 * self.adeltas))
-        return a_start, a_end
+        #根据音频与视频的帧数，来判断其倍数关系，然后采用快速定位方式进行查找最近的对应帧值
+        va_b = int(round(self.alen / self.vlen, 0)) 
+        vst = 0
+        if start > 0:
+            vst = self.vsample_time_site[start - 1]
+        vet = self.vsample_time_site[end - 1]
 
-    # #计算每一帧音频的DTS(PCR相同)
-    # def getAudioDTSPTS(self, iframe, offset):
-    #     #PCR是节目时钟参考，也是一种音视频同步的时钟，pcr、dts、pts 都是对同⼀个系统时钟的采样值，pcr 是递增的，因此可以将其设置为 dts 值,
-    #     # ⾳频数据不需要 pcr(PCR的pid，一般与视频的pid是同一个值)。打包 ts 流时 PAT 和 PMT 表(属于文本数据)是没有 adaptation field，
-    #     # 视频流和⾳频流都需要加 adaptation field
-    #     # 音视频数据需要adaptation field。一般在⼀个帧的第⼀个 ts包和最后⼀个 ts 包⾥加adaptation field
-    #     #音频的每帧的时间刻度
+        #因为音频与视频的时间刻度不一致，需要把视频按音频的时间刻度转换
+        vst = int(vst * self.ascale / self.vscale)
+        vet = int(vet * self.ascale / self.vscale)
 
+        astart = va_b * start
+        aend = va_b * end
 
-    # #根据视频的PTS来获取音频的帧的内容；会返回二个列表：音频帧和DTS
-    # def getAudioDTSList(self, f_dts):
-    #     #dts = 初始值 + (90000 * 48000) / audio_sample_rate = 1024，
-    #     # audio_samples_per_frame这个值与编解码相关，aac取值1024，mp3取值1158，audio_sample_rate是采样率，比如24000、41000。AAC一帧解码出来是每声道1024个sample，也就是说一帧的时长为1024/sample_rate秒。所以每一帧时间戳依次0，1024/sample_rate，...，1024*n/sample_rate秒。
-    #     #根据f_dts来计算起始的音频帧内空；
-    #     b_time = 1
-    #     f_dts = f_dts - b_time
-    #     f_timescale = self.ascale
-    #     f_detas = self.adetas        
-    #     #开始音频帧
-    #     audio_sample_rate = f_timescale / f_detas
-    #     b_an = (f_dts /(90000*self.vscale)) * audio_sample_rate
-    #     #每帧图片对应的音频的帧数
-    #     t_an = self.vdetas/self.vdetas/(audio_sample_rate/self.vscale)
-    #     a_iarray = []
-    #     a_pts = []
-
-    #     for i in range(0, t_an):
-    #         a_iarray = self.adata[int(b_an)+i]
-    #         apts = f_dts + i*(90000 * self.ascale) / audio_sample_rate
-    #         a_pts.append[apts]
-
-    #     return a_iarray, a_pts
+        if astart > self.alen - 1:
+            astart = self.ale - 1
         
+        if aend > self.alen - 1:
+            aend = self.alen - 1
+
+        a_stime = 0
+        if astart > 0:
+            a_stime = self.asample_time_site[astart - 1]
+
+        #如果a_stime 小于vst则需要往后找；如果a_stime大于vet需要往前找
+        if a_stime < vst:
+            for a in range(astart, self.alen):
+                if self.asample_time_site[a-1] > vst:
+                    astart = a
+                    break
+        else:
+            for a in range(astart, 0, -1):
+                if self.asample_time_site[a] < vst:
+                    astart = a
+                    break
+        a_etime = 0
+        if aend > 0:
+            a_etime = self.asample_time_site[aend - 1]
+
+        #如果a_etime 小于vet则需要往后找；如果a_etime大于vet需要往前找
+        if a_etime < vet:
+            for a in range(aend, self.alen):
+                if self.asample_time_site[a-1] > vet:
+                    aend = a
+                    break
+        else:
+            for a in range(aend, 0, -1):
+                if self.asample_time_site[a] < vet:
+                    aend = a
+                    break  
+
+        return astart, aend
+
 if __name__ == '__main__':
 
     pes = PesPack(1,1,1,1)

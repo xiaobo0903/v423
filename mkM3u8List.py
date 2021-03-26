@@ -10,7 +10,7 @@ from trakData import trakData
 from mp4Tools import mp4Tools
 from mp4Parse import Mp4Parse
 
-TIME_SLICE = 2000
+TIME_SLICE = 10
 BASE_URL = "http://10.10.10.101:5000/ts/"
 
 class mkM3u8List():
@@ -38,8 +38,8 @@ class mkM3u8List():
             moov_data = mh.down_Mp4Slice(url, mp4_md5, begin, end)
             #把解析出的视频和音频轨的数据放入到redis数据库中
             mpp.saveTrakData(moov_data)
+            vtrak, atrak = trakdata.getTrakData(mp4_md5)
 
-        vtrak, atrak = trakdata.getTrakData(mp4_md5)
         self._vtrak = vtrak
         self._atrak = atrak
         return
@@ -57,31 +57,17 @@ class mkM3u8List():
         timescale = self._vtrak.timescale
         v_sample_deltas = self._vtrak.sample_deltas
         v_sample_decode_off = self._vtrak.sample_decode_off
+        v_sample_time_site = self._vtrak.sample_time_site
         v_sample_counts = len(v_sample_decode_off)      
         keys = self._vtrak.keys
         
         if not keys:
             return
-        #计算每帧的驻留时间,放大100000倍，主要是为了保证精度ftimescale/100000
-        ftimescale = (100000000*v_sample_deltas)/timescale
-        i = 1
-        akey = []
-        akey.append(1)
-        atime = []
-        keys.append(v_sample_counts)
-        lastkey = keys[len(keys)-1]
-
-        for ikey in keys:
-            akey.append(ikey)
-            sumf = ikey - i
-            tmf = sumf * ftimescale
-            tmf_1 = tmf / 100000
-            if (tmf_1 < TIME_SLICE - 1000) and ikey != lastkey:
-                akey.pop()
-                continue
-            atime.append(int(tmf_1))
-            i = ikey
         
+        #帧时间的计算公式为：
+        # timescale 和帧的偏移时间，key_timescale,如果一个帧的时间刻度是24000，而偏移值为 5000,则计算公式为, 1000*(offset/duration)得到毫秒数
+
+
         #生成m3u8的播放列表，
         # #EXTM3U
         # #EXT-X-VERSION:3
@@ -92,19 +78,44 @@ class mkM3u8List():
         # #EXTINF:11.06,
         # TEST_SHANDONG007_1200/2.ts?startoffset=1388192&endoffset=2770932
         # #EXT-X-ENDLIST
+
+        #以下计算的是生成片段的长度，生成每片内容有两个条件，一个是起始点一定是一个帧，就是帧的编号一定是在keys中， 一个是符合TIME_SLICE时间的要求；
+        # 就是在TIME_SLICE时间段内查找最小关键帧的内容；
         
-        maxtime = 0
         mt_array = []
-        for i in range(0, len(akey)-1):
-            start = akey[i]
-            end = akey[i+1]
-            if end != lastkey:
-                end = end -1
-            sduration = float(atime[i]/1000)
-            if maxtime < sduration:
+        maxtime = 0
+        time_scale = (TIME_SLICE - 2) * timescale
+        start = 0
+        end = 0
+        p_time = 0
+        for i in keys:
+            if start == 0:
+                start = i
+                p_time = 0
+                continue
+            #以下从第二个关键帧起开始计算
+            k_time = v_sample_time_site[i-1]
+            if k_time - p_time < time_scale:
+                continue
+
+            end = i - 1
+            sduration = (k_time - p_time)/timescale
+            if sduration > maxtime:
                 maxtime = sduration
-            mt_array.append("#EXTINF:"+str(sduration)+",\n")
+            p_time = k_time
+            mt_array.append("#EXTINF:"+str(round(sduration, 3))+",\n")
             mt_array.append(BASE_URL+self.mp4_md5+".ts?start="+str(start)+"&end="+str(end)+"\n")
+            p_time = k_time
+            start = i
+    #因为最后一个关键帧，还需要有一个段的内容到结尾；
+        if start != v_sample_counts:
+            k_time = v_sample_time_site[v_sample_counts-1]
+            sduration = (k_time - p_time)/timescale
+            if sduration > maxtime:
+                maxtime = sduration
+            mt_array.append("#EXTINF:"+str(round(sduration, 3))+",\n")
+            mt_array.append(BASE_URL+self.mp4_md5+".ts?start="+str(start)+"&end="+str(v_sample_counts)+"\n")
+
         mt_array.append("#EXT-X-ENDLIST\n")
         mt_array.insert(0,"#EXT-X-TARGETDURATION:"+str(int(maxtime+0.99))+"\n")
         mt_array.insert(0,"#EXT-X-ALLOW-CACHE:YES\n")

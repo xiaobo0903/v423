@@ -19,10 +19,14 @@ class tsPack():
     #对于文件的绝对偏移量；abs_soff 起始偏移量 abs_eoff终止偏移量；
     abs_soff = 0
     abs_eoff = 0
+    pat_count = 0
+    pmt_count = 0
 
     def __init__(self, mp4_md5, start, end):
 
         #根据mp4_md5获取redis中的数据,因为数组中保存的序号是从0开始的，所以起始与终止的数都减1，以与实际数组的内容对应；
+        self.pat_count = 0
+        self.pmt_count = 0
         self.start = start - 1
         self.end = end - 1
         self.mp4_md5 = mp4_md5
@@ -35,7 +39,7 @@ class tsPack():
         #通过md5获取保存在redis中的mp4相关头数据信息
         self._vtrak, self._atrak = trakdata.getTrakData(mp4_md5)
         #初始化设置pes打包实例
-        self.pes_pack = PesPack(self._vtrak.timescale, self._vtrak.sample_deltas, self._atrak.timescale, self._atrak.sample_deltas)
+        self.pes_pack = PesPack(self._vtrak.timescale, self._vtrak.sample_time_site, self._atrak.timescale, self._atrak.sample_time_site)
         return
         
     #根据video请求来的内容来生成mp4的文件偏移量，里面即有音频的内容出含有视频的内容；
@@ -186,7 +190,8 @@ class tsPack():
         ts_vall = []
         #在每一帧的视频帧被打包到pes的时候，其开头必定要加上 00 00 00 01 09 xx  这个nal。不然就有问题，这是苹果官网中的要求
         nau = [0x00, 0x00, 0x00, 0x01, 0x09, 0xf0]
-        nalu = [0x00, 0x00, 0x00, 0x01]        
+        #nalu = [0x00, 0x00, 0x00, 0x01] 
+        nalu = [0x00, 0x00, 0x01]                
         #根据视频的起始和终止的帧，生成视频的帧数据列表
         for i in range(self.start, self.end):
             #返回帧的原始数据
@@ -255,6 +260,9 @@ class tsPack():
             ts_all = ts_all + vts
             if i == 6:
                 ts_all = ts_all + ts_aall[0]
+                #再增加PAT和PMT的内容
+                ts_all.append(bytes(pat))
+                ts_all.append(bytes(pmt)) 
                 ts_aall = ts_aall[1:]
                 i = 0
         
@@ -465,14 +473,21 @@ class tsPack():
     #     for item in pat_d:
     #         print("0x%X,"%item, end=' ')
     #   pid = 1 0000 0000 0000        
-        pat_d = [0x47, 0x40, 0x00, 0x10, 
+        pat_d = [0x47, 0x40, 0x00] 
         #pid=0x0000 表示这是一个PAT
-        0x00, 0x00, 
+        pat_d1 = [0x00, 0x00, 
         0xB0, 0x0D, 0x00, 0x01, 0xC1, 0x00, 0x00, 
         0x00, 0x01,
         #表示这个PID= 1 0000 0000 0000 
         0xF0, 0x00, 
         0x2A, 0xB1, 0x04, 0xB2]
+        pat_1 = 0x10|self.pat_count
+
+        self.pat_count = self.pat_count + 1
+        if self.pat_count > 15:
+            self.pat_count = 0
+
+        pat_d = pat_d + [pat_1,] + pat_d1    
         plen = len(pat_d)
         for i in range(plen, 188):
             pat_d.append(0xFF)           
@@ -498,8 +513,8 @@ class tsPack():
         # #每个TS的Package的长度是188个字节，所以需要整理成188个字节的list
         # pmt_d = pmt_head + o_c + crc
     #   pid = 1 0000 0000 0000 
-        pmt_d = [0x47, 0x50, 0x00, 0x10,           
-                0x00, 0x02,
+        pmt_d = [0x47, 0x50, 0x00]          
+        pmt_d1 =[0x00, 0x02,
                 #长度是1D  
                 0xB0, 0x1D, 
                 0x00, 0x01, 
@@ -511,9 +526,16 @@ class tsPack():
                 0x00, 0x0F, 
                 #流类型0xE1，代表视频，
                 0xE1, 0x01, 0xF0, 0x06, 0x0A, 
-                0x04, 0x7A, 0x68, 0x6F, 0x00, 
-                0x11, 0x65, 0x79, 0x85]
-                
+                0x04, 0x75, 0x6E, 0x64, 0x00, 
+                0x08, 0x7D, 0xE8, 0x77]
+    
+        pmt_1 = 0x10|self.pmt_count
+
+        self.pmt_count = self.pmt_count + 1
+        if self.pmt_count > 15:
+            self.pmt_count = 0
+
+        pmt_d = pmt_d+ [pmt_1,] + pmt_d1               
         # for item in pmt_d:
         #     print("0x%X,"%item, end=' ')         
         plen = len(pmt_d)

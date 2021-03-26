@@ -22,16 +22,18 @@ class mp4Set():
     # #时间刻度，从mdhd中获取
     timescale = None
     #样例的数量；
-    sample_counts = None
-    # #时间刻度单位，从stts中获取
-    sample_deltas = None                               
+    sample_counts = None                             
     # #Sequence Paramater Set List
     sps = None
     # #Picture Paramater Set List        
     pps = None
     # #video timescale
     # #关键帧序列                
-    keys = []         
+    keys = []
+    # #时间刻度单位，从stts中获取
+    sample_deltas = []
+    #每个帧的时间偏移量，可用于计算pts和dts
+    sample_time_site = []           
     # #sample-size 每个视频sample的大小；
     sample_size = []
     # #每个sample所在的chunk        
@@ -56,9 +58,8 @@ class trakClass():
         self.duration = None
         #时间刻度，从mdhd中获取
         self.timescale = None
-        #时间刻度单位，从stts中获取
-        self.sample_deltas = None
-        self.sample_counts = None
+        # #时间刻度单位，从stts中获取
+        # self.sample_counts = None
         self._mdia = None
         self._tkhd = None
         self._stbl = None
@@ -72,7 +73,10 @@ class trakClass():
         self.sps = None
         #Picture Paramater Set List        
         self.pps = None
-        #video timescale
+        #每个帧的时长
+        self.sample_deltas = []
+        #每个帧的时间点,主要是为了音、视频的同步
+        self.sample_time_site = []
         #关键帧序列                
         self.keys = []         
         #sample-size 每个视频sample的大小；
@@ -244,24 +248,19 @@ class trakClass():
     #从stts中获取sample_deltas
     def getSampleDeltasAndSampleCount(self):
 
-        # if self._stts:
-        #     data = self._stts[:16]
-        #     dary = struct.unpack(">12xI", data)
-        #     for i in range(0, dary[0], 1):
-        #         h_int = int.from_bytes(self._stts[16+i*4:16+i*4+4], byteorder='big', signed=False)
-        #         self.sample_counts = h_int                
-        #         h_int1 = int.from_bytes(self._stts[20+i*4:20+i*4+4], byteorder='big', signed=False)                              
-        #         self.sample_deltas = h_int1
-
         if self._stts:
             data = self._stts[:16]
             dlen, dary = struct.unpack(">I8xI", data)
-            for i in range(0, dlen, 8):
+            data = self._stts[16:]
+            t_site = 0
+            for i in range(0, dary):
                 #h_int1为取得的chunk的ID号，从1开始，为了保证后续的简单，把chunk的编号设为从0开始；
-                h_int1 = int.from_bytes(self._stts[16+i:16+i+4], byteorder='big', signed=False)
-                h_int2 = int.from_bytes(self._stts[16+i+4:16+i+8], byteorder='big', signed=False)
-                self.sample_deltas = h_int2
-                break
+                h_int1 = int.from_bytes(data[i*8:i*8+4], byteorder='big', signed=False)
+                h_int2 = int.from_bytes(data[i*8+4:i*8+8], byteorder='big', signed=False)
+                for m in range(0, h_int1):
+                    t_site = t_site + h_int2
+                    self.sample_deltas.append(h_int2)
+                    self.sample_time_site.append(t_site)
                 #下面注掉的内容是在各帧之间的显示时长不一致时需要处理的情况，但一般情况下都是标准的，所以为了提高效率只是取一个值即可；
                 # for m in range(0, h_int1):
                 #     self.sample_pts_deltas.append(h_int2)
@@ -378,8 +377,10 @@ class trakClass():
             self.mset.timescale = self.timescale
         if self.sample_deltas:
             self.mset.sample_deltas = self.sample_deltas
-        if self.sample_counts:
-            self.mset.sample_counts = self.sample_counts                           
+        if self.sample_time_site:
+            self.mset.sample_time_site = self.sample_time_site
+        # if self.sample_counts:
+        #     self.mset.sample_counts = self.sample_counts                           
         if self.sps:
             self.mset.sps = self.sps
         if self.pps:
