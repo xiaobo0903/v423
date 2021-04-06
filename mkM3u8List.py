@@ -9,14 +9,15 @@
 from trakData import trakData
 from mp4Tools import mp4Tools
 from mp4Parse import Mp4Parse
+import cfg
 
 TIME_SLICE = 10
-BASE_URL = "http://10.10.10.101:5000/ts/"
 
 class mkM3u8List():
 
     def __init__(self, url, mp4_md5):
 
+        self.cfg = cfg.cfgClass()
         #根据mp4_md5获取redis中的数据
         self.mp4_md5 = mp4_md5
 
@@ -89,12 +90,8 @@ class mkM3u8List():
         end = 0
         p_time = 0
         for i in keys:
-            if start == 0:
-                start = i
-                p_time = 0
-                continue
-            #以下从第二个关键帧起开始计算
-            k_time = v_sample_time_site[i-1]
+
+            k_time = v_sample_time_site[i]
             if k_time - p_time < time_scale:
                 continue
 
@@ -104,28 +101,31 @@ class mkM3u8List():
                 maxtime = sduration
             p_time = k_time
             mt_array.append("#EXTINF:"+str(round(sduration, 3))+",\n")
-            mt_array.append(BASE_URL+self.mp4_md5+".ts?start="+str(start)+"&end="+str(end)+"\n")
+            mt_array.append(self.cfg.BASE_URL+self.mp4_md5+".ts?start="+str(start)+"&end="+str(end)+"\n")
             p_time = k_time
             start = i
     #因为最后一个关键帧，还需要有一个段的内容到结尾；
-        if start != v_sample_counts:
+        if start != v_sample_counts - 1:
             k_time = v_sample_time_site[v_sample_counts-1]
             sduration = (k_time - p_time)/timescale
             if sduration > maxtime:
                 maxtime = sduration
             mt_array.append("#EXTINF:"+str(round(sduration, 3))+",\n")
-            mt_array.append(BASE_URL+self.mp4_md5+".ts?start="+str(start)+"&end="+str(v_sample_counts)+"\n")
+            mt_array.append(self.cfg.BASE_URL+self.mp4_md5+".ts?start="+str(start)+"&end="+str(v_sample_counts - 1)+"\n")
 
         mt_array.append("#EXT-X-ENDLIST\n")
-        mt_array.insert(0,"#EXT-X-TARGETDURATION:"+str(int(maxtime+0.99))+"\n")
+        mt_array.insert(0,"#EXT-X-TARGETDURATION:"+str(int(maxtime+0.99999))+"\n")
         mt_array.insert(0,"#EXT-X-ALLOW-CACHE:YES\n")
         mt_array.insert(0,"#EXT-X-MEDIA-SEQUENCE:0\n")
         mt_array.insert(0,"#EXT-X-VERSION:3\n")
         mt_array.insert(0,"#EXTM3U\n")
 
         ret = ""
-        with open("test.m3u8", "w") as f:
-            for mt in mt_array:
-                f.write(mt)
-                ret = ret+mt
+        # with open("test.m3u8", "w") as f:
+        #     for mt in mt_array:
+        #         f.write(mt)
+        #         ret = ret+mt
+        for mt in mt_array:
+            ret = ret+mt
+
         return ret

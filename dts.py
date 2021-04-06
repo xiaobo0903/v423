@@ -17,6 +17,9 @@ import datetime
 from mp4Parse import Mp4Parse
 from mkM3u8List import mkM3u8List
 from tsPack import tsPack
+import logging_config
+
+logger = logging_config.Config().get_config()
 
 app = Flask(__name__)
  
@@ -34,38 +37,45 @@ def dts():
         url = request.args.get("url")
     if url == None:
         abort(404)
-    start = datetime.datetime.now() 
+    try:
+        start = datetime.datetime.now() 
 
-    url1 = unquote(url)
-    mp4_md5 = md5(url1.encode("utf8")).hexdigest() 
+        url1 = unquote(url)
+        mp4_md5 = md5(url1.encode("utf8")).hexdigest() 
 
-    mList = mkM3u8List(url1, mp4_md5)
-    ret = mList.mk()
+        mList = mkM3u8List(url1, mp4_md5)
+        ret = mList.mk()
 
-    end = datetime.datetime.now()     
-    print(str(end-start)+" 秒")    
-    response = Response(ret)
-    response.headers['Content-Type'] = "application/vnd.apple.mpegurl"
-    # response.headers['Content-Disposition'] = "p_w_upload; filename="+mp4_md5+".m3u8"
-    return response
+        end = datetime.datetime.now()     
+        logger.info(str(end-start)+" 秒")    
+        response = Response(ret)
+        response.headers['Content-Type'] = "application/vnd.apple.mpegurl"
+        # response.headers['Content-Disposition'] = "p_w_upload; filename="+mp4_md5+".m3u8"
+        return response
+    except:
+        abort(503)
 
 @app.route("/ts/<md5>.ts", methods=["GET"])
-#此路由的定义是为了提供TS流和在实实时封装和转换工作
+#此路由的定义是为了提供TS流和在实时封装和转换工作
 def ts(md5):
-    uri = request.path
-    b_start = request.args.get("start")
-    b_end = request.args.get("end")
-    start = datetime.datetime.now() 
-    tspack = tsPack(md5, int(b_start), int(b_end))
-    ret_b = tspack.getTS()
-    response = make_response(ret_b)
-    # file = md5+".ts?start"+b_start+"&end="+b_end
-    response.headers["Content-Type"] = "video/mp2t"
-    # return response
-    end = datetime.datetime.now()     
-    print(str(end-start)+" 秒") 
-    return response
-    # return Response(uri+b_start+b_end)
+
+    try:
+        uri = request.path
+        b_start = request.args.get("start")
+        b_end = request.args.get("end")
+        start = datetime.datetime.now() 
+        tspack = tsPack(md5, int(b_start), int(b_end))
+        ret_b = tspack.getTS()
+        response = make_response(ret_b)
+        # file = md5+".ts?start"+b_start+"&end="+b_end
+        response.headers["Content-Type"] = "video/mp2t"
+        # return response
+        end = datetime.datetime.now()     
+        logger.info(str(end-start)+" 秒") 
+        return response
+        # return Response(uri+b_start+b_end)
+    except:
+        abort(404)
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", debug=False)

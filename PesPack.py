@@ -53,6 +53,8 @@ class PesPack():
         #pts dts标志:数据含有pts和dtd: 0xc0
         #pes含有的pts和dts的长度，因为即含有pts又有dts，所以两个加一起是10个字节的长度:0x0A
         self.pes_pts_dts_flag = [0x80, 0xC0, 0x0A]
+        self.pes_pts_flag = [0x80, 0x80, 0x05]
+        self.v_dts = {}
 
     #####################################################
     # pts：显示时间戳，单位是毫秒*90
@@ -79,13 +81,16 @@ class PesPack():
     #根据帧数据进行TS的封包, iframe是帧的序号， vdata是帧的h264压缩后的数据；
     def mk_pesVData(self, iframe, offset, vdata):
         #nalu = 帧数据+sps+pps, 如果打成PES包，还需要加上包头 pes = pes包头+nalu
-        dts, pts = self.getVideoDTSPTS(iframe, offset)
+        dts, pts = self.get_Video_FMT_DTS_PTS(iframe, offset)
         #pes的长度为 5(pts.len)+5(dts.len)+3+vdata.len
         pes_length = len(vdata)+13
         # pes_packet_length = struct.pack('H',pes_length)
         pes_packet_length = struct.pack('H',0)
-        # pes的封装内容：4字节音频标识0x000001e0 +  1字节长度(0为不限长度) +pts_dts的标志+pts+dts+nalu数据；    
-        pes_data = bytes(self.pes_vstart_code) + pes_packet_length + bytes(self.pes_pts_dts_flag) + pts + dts + vdata
+        # pes的封装内容：4字节音频标识0x000001e0 +  1字节长度(0为不限长度) +pts_dts的标志+pts+dts+nalu数据；
+        if len(dts) == 0:
+            pes_data = bytes(self.pes_vstart_code) + pes_packet_length + bytes(self.pes_pts_flag) + pts + vdata    
+        else:
+            pes_data = bytes(self.pes_vstart_code) + pes_packet_length + bytes(self.pes_pts_dts_flag) + pts + dts + vdata
         return pes_data
 
     #根据帧数据进行TS的封包, iframe是帧起始序号， vdata是帧的h264压缩后的数据； 
@@ -98,8 +103,9 @@ class PesPack():
         #因为后面还有8上字节与pts相关的内容，所以加上了8个字节；
         a_len = len(adata)+8
         a_len_b = a_len.to_bytes(2, byteorder='big')
-        pts = self.getAudioPTS(iframe)        
-        f_adata = bytes(nau_head) + a_len_b + bytes(pts_flag) + pts + adata
+        pts_s, pts  = self.getAudioPTS(iframe)        
+        f_adata = bytes(nau_head) + a_len_b + bytes(pts_flag) + pts_s + adata
+        
         return f_adata
 
     #在打包过程中需要把整型的pts或dts数值转换成5个字节的数组，并分为三个部分；‘0010’ PTS[32..30] marker_bit PTS[29..15] marker_bit PTS[14..0] marker_bit
@@ -119,6 +125,7 @@ class PesPack():
 
     #在打包过程中需要把整型的pts或dts数值转换成5个字节的数组，并分为三个部分；‘0010’ PTS[32..30] marker_bit PTS[29..15] marker_bit PTS[14..0] marker_bit
     def dts_fmt(self, p):
+
         #PTS的起始码为0011，DTS的起始码为0001
         ca = p
         fm1 = (ca&0x0000007FFF)<<1
@@ -145,30 +152,27 @@ class PesPack():
         # # f_dts = int(b_time + iframe*(90000 / audio_frame_rate))
         # f_pts = int(b_time + iframe*(90000 / audio_frame_rate))
         # return self.pts_fmt(f_pts)
-        b_offset = 135000
-        f_deltas = 0
-        if iframe > 0:
-            f_deltas = self.asample_time_site[iframe - 1]
-
-        f_pts = int((f_deltas * 90000) / self.ascale) + b_offset
-        return self.pts_fmt(f_pts)
-
-    #计算每一帧视频的DTS(PCR与DTR相同)
-    def getVideoDTSPTS(self, iframe, offset):
-        # PCR是节目时钟参考，也是一种音视频同步的时钟，pcr、dts、pts 都是对同⼀个系统时钟的采样值，pcr 是递增的，因此可以将其设置为 dts 值,
-        # ⾳频数据不需要 pcr(PCR的pid，一般与视频的pid是同一个值)。打包 ts 流时 PAT 和 PMT 表(属于文本数据)是没有 adaptation field，
-        # 视频流和⾳频流都需要加 adaptation field
-        # 音视频数据需要adaptation field。一般在⼀个帧的第⼀个 ts包和最后⼀个 ts 包⾥加adaptation field
-        #音频的每帧的时间刻度
-        #显示时间: PTS = DTS + CompositionTime(offset)
         b_offset = 126000
         f_deltas = 0
-        if iframe > 0:
-            f_deltas = self.vsample_time_site[iframe - 1]
+        
+        f_deltas = self.asample_time_site[iframe]
+        f_pts = int((f_deltas * 90000) / self.ascale) + b_offset
 
-        f_dts = int((f_deltas * 90000) / self.vscale) + b_offset
+        return self.pts_fmt(f_pts), f_pts
+
+    #计算每一帧视频的pts
+    def getVideoPTS(self, iframe, offset):
+
+        b_offset = 126000
+        f_deltas = 0
+        
+        f_deltas = self.vsample_time_site[iframe]
         f_pts = int(((f_deltas + offset) * 90000) / self.vscale) + b_offset
-        return self.dts_fmt(f_dts), self.pts_fmt(f_pts)
+
+        return f_pts
+
+    def getVideoDTS1(self, iframe):
+        return self.v_dts[iframe]
 
     #获取当前帧的DTS用于设置PCR
     def getDTS(self, iframe):
@@ -182,67 +186,78 @@ class PesPack():
         # f_deltas = self.vdeltas
         # video_frame_rate = f_timescale / f_deltas
         # f_dts = int(b_time + iframe*(90000 / video_frame_rate))
+
         b_offset = 126000       
         f_deltas = 0
-        if iframe > 0:
-            f_deltas = self.vsample_time_site[iframe - 1]
+        f_deltas = self.vsample_time_site[iframe]
         f_dts = int((f_deltas * 90000) / self.vscale) + b_offset
 
+        self.v_dts[iframe] = f_dts
+        
         return f_dts
+
+    #计算每一帧视频的DTS(PCR与DTR相同)
+    def get_Video_FMT_DTS_PTS(self, iframe, offset):
+
+        # PCR是节目时钟参考，也是一种音视频同步的时钟，pcr、dts、pts 都是对同⼀个系统时钟的采样值，pcr 是递增的，因此可以将其设置为 dts 值,
+        # ⾳频数据不需要 pcr(PCR的pid，一般与视频的pid是同一个值)。打包 ts 流时 PAT 和 PMT 表(属于文本数据)是没有 adaptation field，
+        # 视频流和⾳频流都需要加 adaptation field
+        # 音视频数据需要adaptation field。一般在⼀个帧的第⼀个 ts包和最后⼀个 ts 包⾥加adaptation field
+        #音频的每帧的时间刻度
+        #显示时间: PTS = DTS + CompositionTime(offset)
+
+        # b_offset = 126000
+        # f_deltas = 0
+        # f_deltas1 = 0
+
+        # if iframe > 0:
+        #     f_deltas = self.vsample_time_site[iframe - 1]
+        #     f_deltas1 = self.vsample_time_site[iframe] - f_deltas
+
+        # f_dts = int((f_deltas * 90000) / self.vscale) + b_offset
+        # f_pts = int(((f_deltas + offset) * 90000) / self.vscale) + b_offset
+
+        f_pts = self.getVideoPTS(iframe, offset)
+        f_dts = self.getDTS(iframe)
+
+        dts = self.dts_fmt(f_dts)
+        pts = self.pts_fmt(f_pts)
+        #如果pts与dts相同，则不指定dts，指定了是否会出错？
+        if f_pts == f_dts:
+            dts = b""
+
+        return dts, pts
+
 
     #根据视频的起始和终止帧号来计算音频的起始和终止的偏移量；
     def getAudioRange(self, start, end):
-        
-        #根据音频与视频的帧数，来判断其倍数关系，然后采用快速定位方式进行查找最近的对应帧值
-        va_b = int(round(self.alen / self.vlen, 0)) 
-        vst = 0
-        if start > 0:
-            vst = self.vsample_time_site[start - 1]
-        vet = self.vsample_time_site[end - 1]
 
-        #因为音频与视频的时间刻度不一致，需要把视频按音频的时间刻度转换
-        vst = int(vst * self.ascale / self.vscale)
-        vet = int(vet * self.ascale / self.vscale)
+        spts = self.getDTS(start)
+        epts = self.getDTS(end)
 
-        astart = va_b * start
-        aend = va_b * end
+        astart = start
 
-        if astart > self.alen - 1:
-            astart = self.ale - 1
-        
-        if aend > self.alen - 1:
+        for i in range(start, self.alen):
+            as_pts, a_pts = self.getAudioPTS(i)
+
+            if a_pts >= spts:
+                astart = i
+                break
+
+        astart = astart - 10
+        if astart < 0:
+            astart = 0
+
+        aend = astart
+        for i in range(start, self.alen):
+            as_pts, a_pts = self.getAudioPTS(i)
+            if a_pts > epts:
+                aend = i
+                break
+        #因为精度问题，所以在此多取一些文件的内容，以进行调节，不影响最后的内容的生成；
+        aend = aend + 10
+        if aend >= self.alen:
             aend = self.alen - 1
-
-        a_stime = 0
-        if astart > 0:
-            a_stime = self.asample_time_site[astart - 1]
-
-        #如果a_stime 小于vst则需要往后找；如果a_stime大于vet需要往前找
-        if a_stime < vst:
-            for a in range(astart, self.alen):
-                if self.asample_time_site[a-1] > vst:
-                    astart = a
-                    break
-        else:
-            for a in range(astart, 0, -1):
-                if self.asample_time_site[a] < vst:
-                    astart = a
-                    break
-        a_etime = 0
-        if aend > 0:
-            a_etime = self.asample_time_site[aend - 1]
-
-        #如果a_etime 小于vet则需要往后找；如果a_etime大于vet需要往前找
-        if a_etime < vet:
-            for a in range(aend, self.alen):
-                if self.asample_time_site[a-1] > vet:
-                    aend = a
-                    break
-        else:
-            for a in range(aend, 0, -1):
-                if self.asample_time_site[a] < vet:
-                    aend = a
-                    break  
 
         return astart, aend
 
